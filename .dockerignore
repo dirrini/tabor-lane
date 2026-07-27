@@ -1,0 +1,13 @@
+.git
+.github
+.env
+.server
+.box
+modules
+testbox
+logs
+coverage
+src/ts
+src/js
+*.md
+

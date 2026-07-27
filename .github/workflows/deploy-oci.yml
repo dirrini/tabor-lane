@@ -1,0 +1,103 @@
+name: Deploy OCI
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: production
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: dirrini/tabor-lane
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: production
+    outputs:
+      image: ${{ steps.image.outputs.ref }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Authenticate to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate image reference
+        id: image
+        shell: bash
+        run: echo "ref=${REGISTRY}/${IMAGE_NAME}:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and publish immutable image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ steps.image.outputs.ref }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: publish
+    environment: production
+
+    steps:
+      - name: Checkout deployment definition
+        uses: actions/checkout@v6
+
+      - name: Configure SSH
+        shell: bash
+        env:
+          OCI_SSH_KEY: ${{ secrets.OCI_SSH_KEY }}
+          OCI_HOST: ${{ secrets.OCI_HOST }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$OCI_SSH_KEY" > ~/.ssh/oci
+          chmod 600 ~/.ssh/oci
+          ssh-keyscan -H "$OCI_HOST" >> ~/.ssh/known_hosts
+
+      - name: Upload deployment definition
+        env:
+          OCI_HOST: ${{ secrets.OCI_HOST }}
+          OCI_USER: ${{ secrets.OCI_USER }}
+          OCI_APP_PATH: ${{ secrets.OCI_APP_PATH }}
+        run: |
+          ssh -i ~/.ssh/oci "$OCI_USER@$OCI_HOST" "mkdir -p '$OCI_APP_PATH'"
+          scp -i ~/.ssh/oci compose.production.yaml \
+            "$OCI_USER@$OCI_HOST:$OCI_APP_PATH/compose.production.yaml"
+
+      - name: Deploy and verify
+        env:
+          OCI_HOST: ${{ secrets.OCI_HOST }}
+          OCI_USER: ${{ secrets.OCI_USER }}
+          OCI_APP_PATH: ${{ secrets.OCI_APP_PATH }}
+          APP_IMAGE: ${{ needs.publish.outputs.image }}
+        run: |
+          ssh -i ~/.ssh/oci "$OCI_USER@$OCI_HOST" \
+            "cd '$OCI_APP_PATH' && APP_IMAGE='$APP_IMAGE' docker compose --env-file .env.production -f compose.production.yaml pull && APP_IMAGE='$APP_IMAGE' docker compose --env-file .env.production -f compose.production.yaml up -d --wait"
+          curl --fail --retry 12 --retry-delay 5 \
+            "https://${OCI_HOST}/health/ready"
+

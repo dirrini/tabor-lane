@@ -1,19 +1,35 @@
-component {
+component extends="coldbox.system.Bootstrap" {
 
-    this.name = "LuceeMySQLApp_v2";
-    this.applicationTimeout = createTimeSpan(0,1,0,0);
+    this.name = "TaborLane";
+    this.applicationTimeout = createTimeSpan( 1, 0, 0, 0 );
+    this.sessionManagement = true;
+    this.sessionTimeout = createTimeSpan( 0, 2, 0, 0 );
+    this.setClientCookies = true;
+    this.setDomainCookies = false;
 
-    dbName = server.system.environment.DB_NAME ?: "luceeapp";
-    dbUser = server.system.environment.DB_USER ?: "luceeapp"; 
-    dbPass = server.system.environment.DB_PASSWORD ?: "";
-    this.datasource = "mydb";
+    COLDBOX_APP_ROOT_PATH = getDirectoryFromPath( getCurrentTemplatePath() );
+    COLDBOX_APP_MAPPING = "";
+    COLDBOX_CONFIG_FILE = "";
+    COLDBOX_APP_KEY = "";
+
+    variables.environment = server.system.environment;
+    variables.dbHost = variables.environment.DB_HOST ?: "postgres";
+    variables.dbPort = variables.environment.DB_PORT ?: "5432";
+    variables.dbName = variables.environment.DB_NAME ?: "tabor_lane";
+    variables.dbUser = variables.environment.DB_USER ?: "tabor_lane";
+    variables.dbPassword = variables.environment.DB_PASSWORD ?: "tabor_lane_local";
+
+    this.datasource = "taborLane";
     this.datasources = {
-        "mydb" = {
-            class: "com.mysql.cj.jdbc.Driver", // Driver moderno para MySQL
-            bundleName: "com.mysql.cj",        // Opcional, ajuda o Lucee a localizar o bundle OSGi
-            connectionString: "jdbc:mysql://db:3306/#dbName#?useUnicode=true&characterEncoding=UTF-8&serverTimezone=UTC&connectTimeout=10000",
-            username: dbUser,
-            password: dbPass
+        "taborLane" = {
+            class = "org.postgresql.Driver",
+            bundleName = "org.postgresql.jdbc",
+            connectionString = "jdbc:postgresql://#variables.dbHost#:#variables.dbPort#/#variables.dbName#",
+            username = variables.dbUser,
+            password = variables.dbPassword,
+            connectionLimit = 20,
+            connectionTimeout = 10,
+            timezone = "UTC"
         }
     };
 

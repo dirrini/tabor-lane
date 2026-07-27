@@ -1,0 +1,27 @@
+{
+  "name": "dirrini/tabor-lane",
+  "version": "0.1.0",
+  "slug": "tabor-lane",
+  "type": "project",
+  "homepage": "https://github.com/dirrini/tabor-lane",
+  "dependencies": {
+    "coldbox": "^7",
+    "cbi18n": "^3",
+    "cbstorages": "^3",
+    "qb": "^10"
+  },
+  "devDependencies": {
+    "testbox": "^6"
+  },
+  "scripts": {
+    "test": "testbox run",
+    "build": "package set version=`package version patch`"
+  },
+  "installPaths": {
+    "coldbox": "src/coldbox",
+    "cbi18n": "src/modules/cbi18n",
+    "cbstorages": "src/modules/cbstorages",
+    "qb": "src/modules/qb",
+    "testbox": "tests/testbox"
+  }
+}

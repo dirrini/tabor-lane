@@ -1,1 +1,13 @@
 .env
+.DS_Store
+.idea/
+.vscode/
+.history/
+modules/
+testbox/
+.server/
+.box/
+logs/
+coverage/
+src/js/
+*.log

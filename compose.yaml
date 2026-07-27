@@ -1,0 +1,99 @@
+name: tabor-lane
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: tabor-lane:${IMAGE_TAG:-local}
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-tabor_lane}
+      DB_USER: ${DB_USER:-tabor_lane}
+      DB_PASSWORD: ${DB_PASSWORD:-tabor_lane_local}
+      STORAGE_ENDPOINT: http://minio:9000
+      STORAGE_REGION: auto
+      STORAGE_ACCESS_KEY: ${MINIO_ROOT_USER:-tabor_lane}
+      STORAGE_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-tabor_lane_local_secret}
+      STORAGE_BUCKET: ${STORAGE_BUCKET:-tabor-lane-attachments}
+    ports:
+      - "${APP_PORT:-8090}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks:
+      - tabor-lane
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${DB_NAME:-tabor_lane}
+      POSTGRES_USER: ${DB_USER:-tabor_lane}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-tabor_lane_local}
+    ports:
+      - "${DB_PORT:-5433}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+    restart: unless-stopped
+    networks:
+      - tabor-lane
+
+  minio:
+    image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-tabor_lane}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-tabor_lane_local_secret}
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+    restart: unless-stopped
+    networks:
+      - tabor-lane
+
+  minio-init:
+    image: quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-tabor_lane}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-tabor_lane_local_secret}
+      STORAGE_BUCKET: ${STORAGE_BUCKET:-tabor-lane-attachments}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >
+        mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}" &&
+        mc mb --ignore-existing "local/$${STORAGE_BUCKET}" &&
+        mc anonymous set none "local/$${STORAGE_BUCKET}"
+    networks:
+      - tabor-lane
+
+volumes:
+  postgres-data:
+  minio-data:
+
+networks:
+  tabor-lane:
+    driver: bridge

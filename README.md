@@ -1,43 +1,87 @@
-# ⚡ Lucee Kanban Engine
+# Tabor Lane
 
-A fast, modern, and lightweight Kanban Board system built with an enterprise-grade backend powered by **Lucee (ColdFusion)** and an ultra-sleek frontend using **Tailwind CSS**, **daisyUI v5**, and **SortableJS**.
+Tabor Lane is a modular Kanban workspace for clear, connected work. This
+repository contains the first product foundation: a bilingual server-rendered
+landing page, application preview, PostgreSQL schema and local S3-compatible
+attachment storage.
 
----
+## Technology
 
-## 🚀 Tech Stack
+- Lucee 6 and ColdBox 7
+- cbI18n resource bundles for English and Brazilian Portuguese
+- PostgreSQL 17
+- MinIO for local attachment storage
+- Docker Compose for the complete development environment
+- GitHub Actions for CI and multi-platform OCI deployment
 
-| Layer | Technology | Description |
-| :--- | :--- | :--- |
-| **Backend** | [Lucee v5+](https://lucee.org/) | Open-source ColdFusion (CFML) engine acting as a high-performance REST API wrapper. |
-| **Database** | [MySQL 8.0](https://www.mysql.com/) | Relational storage utilizing atomic transaction blocks for indexing board entities. |
-| **Frontend** | [Tailwind CSS v4](https://tailwindcss.com/) | Utility-first CSS compiling via runtime runtime parsing engine. |
-| **UI Kit** | [daisyUI v5](https://daisyui.com/) | Semantic component framework offering native dark/light theme switching parameters. |
-| **UX Engine** | [SortableJS](https://sortablejs.github.io/Sortable/) | No-dependency, fluid drag-and-drop mechanics handling drop behaviors. |
+## Run locally
 
----
+Requirements: Docker Desktop with Docker Compose.
 
-## 🎨 UI & Features
+```powershell
+Copy-Item .env.example .env
+docker compose up --build --wait
+```
 
-*   **Fluid Drag-and-Drop:** Items snap dynamically across columns with responsive velocity metrics using SortableJS.
-*   **Modern Typography:** Global structural styles utilize the **Plus Jakarta Sans** geometric display font for maximum crispness.
-*   **Contextual Avatars:** Automatic fallback placeholders featuring contrasting foreground initials computed securely by Lucee parsing scripts.
-*   **Responsive Flow Layouts:** Dynamic viewport column grids that support seamless horizontal scrolling if your pipeline tracks multiple statuses.
+Open:
 
----
+- Product: <http://localhost:8090>
+- Workspace preview: <http://localhost:8090/app>
+- MinIO Console: <http://localhost:9001>
+- Readiness: <http://localhost:8090/health/ready>
 
-## 📁 Project Architecture
+Stop and preserve data:
+
+```powershell
+docker compose down
+```
+
+Stop and remove local database and object data:
+
+```powershell
+docker compose down --volumes
+```
+
+## Internationalization
+
+UI copy lives in:
 
 ```text
-your-project/
-│
-├── db/
-│   └── init-db.sql       # Database schemas & sequence initializations
-│
-├── src/                  # Lucee Context Root (.cfm / .cfc)
-│   ├── api/              # Pure backend endpoints (JSON payloads only)
-│   │   ├── Application.cfc
-│   │   └── update_order.cfm
-│   └── index.cfm         # Main visual pipeline viewport template
-│
-├── docker-compose.yml    # Main stack orchestration layer
-└── README.md
+src/includes/i18n/main_en_US.json
+src/includes/i18n/main_pt_BR.json
+```
+
+The selected locale is stored in a cookie by cbI18n. Locale routes are
+`/locale/en_US` and `/locale/pt_BR`.
+
+## Interface conventions
+
+Interface icons must use SVG assets from `src/resources/icons.svg`. Do not use
+Unicode characters, emoji or icon fonts as visual icons. The Tabor Lane brand
+mark and favicon always include the Tabor `T`.
+
+## Attachments
+
+Development uses a private MinIO bucket created by `minio-init`. Production can
+replace MinIO with Cloudflare R2 by changing only the `STORAGE_*` environment
+variables. Files belong in object storage; attachment metadata and permissions
+belong in PostgreSQL.
+
+## Delivery
+
+`ci.yml` validates translations, builds the application, starts the complete
+stack and checks application, PostgreSQL and MinIO health.
+
+`deploy-oci.yml` builds an immutable `amd64`/`arm64` image, publishes it to
+GHCR and deploys it to an OCI VM. The VM must already contain Docker, a GHCR
+login for private images and an `.env.production` file in `OCI_APP_PATH`.
+
+Configure the GitHub `production` environment with:
+
+- `OCI_HOST`
+- `OCI_USER`
+- `OCI_SSH_KEY`
+- `OCI_APP_PATH`
+
+Database and storage credentials stay in `.env.production` on the server and
+are never copied into the image.

@@ -1,0 +1,21 @@
+{
+  "name": "tabor-lane",
+  "openBrowser": false,
+  "web": {
+    "http": {
+      "port": 8080
+    },
+    "rewrites": {
+      "enable": true
+    },
+    "webroot": "src"
+  },
+  "app": {
+    "cfengine": "lucee@6"
+  },
+  "jvm": {
+    "heapSize": 768,
+    "minHeapSize": 256
+  }
+}
+

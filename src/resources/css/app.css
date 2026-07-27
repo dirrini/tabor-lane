@@ -52,7 +52,8 @@ button { color: inherit; }
   background: var(--green);
   box-shadow: 0 6px 16px rgba(198,61,75,.2);
 }
-.brand-mark::before { position:absolute; z-index:2; content:"T"; inset:5px 0 0; color:#25191b; font:800 20px/1 "Manrope",sans-serif; text-align:center; letter-spacing:-1px; }
+.brand-mark::before { position:absolute; z-index:2; content:"T"; top:0; right:0; width:27px; color:#25191b; font:800 30px/1 "Manrope",sans-serif; text-align:center; letter-spacing:-2px; transform:scaleX(1.08); transform-origin:center; }
+.brand-mark::after { content:none; }
 .brand-mark i { position:absolute; display:block; width:13px; height:11px; border:1px solid rgba(158,41,54,.15); border-radius:3px; background:#fff8f7; box-shadow:0 2px 4px rgba(80,19,27,.12); transform:rotate(-4deg); }
 .brand-mark i::after { position:absolute; content:""; inset:3px 3px auto; height:1px; background:#e8a5ac; box-shadow:0 3px 0 #f0c5c9; }
 .brand-mark i:nth-child(1) { top:6px; left:5px; }

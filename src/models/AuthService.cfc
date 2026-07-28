@@ -389,6 +389,113 @@ component singleton {
 		return { success = true };
 	}
 
+	struct function getProfile( required string userId, required string workspaceId ){
+		var rows = queryExecute(
+			"SELECT CAST(u.id AS TEXT) AS id, u.email, u.display_name, u.locale,
+			        u.created_at, u.updated_at, u.password_hash IS NOT NULL AS has_password,
+			        u.email_verified_at,
+			        CAST(w.id AS TEXT) AS workspace_id, w.name AS workspace_name,
+			        w.slug AS workspace_slug, w.created_at AS workspace_created_at,
+			        w.plan, wm.role, wm.created_at AS member_since
+			 FROM app_user u
+			 JOIN workspace_member wm ON wm.user_id = u.id
+			 JOIN workspace w ON w.id = wm.workspace_id
+			 WHERE u.id = CAST(:userId AS UUID)
+			   AND w.id = CAST(:workspaceId AS UUID)",
+			{ userId = arguments.userId, workspaceId = arguments.workspaceId },
+			{ returntype = "array" }
+		);
+		return rows.len() ? { found = true, data = rows[ 1 ] } : { found = false };
+	}
+
+	struct function updateProfile(
+		required string userId,
+		required string displayName,
+		required string email,
+		required string locale
+	){
+		var normalizedEmail = lCase( trim( arguments.email ) );
+		var normalizedName = trim( arguments.displayName );
+		if (
+			!normalizedName.len()
+			|| !isValid( "email", normalizedEmail )
+			|| !listFindNoCase( "en_US,pt_BR", arguments.locale )
+		) {
+			return { success = false, code = "invalid" };
+		}
+		var current = queryExecute(
+			"SELECT email FROM app_user WHERE id = CAST(:userId AS UUID)",
+			{ userId = arguments.userId },
+			{ returntype = "array" }
+		);
+		if ( !current.len() ) return { success = false, code = "not_found" };
+		var emailChanged = lCase( current[ 1 ].email ) != normalizedEmail;
+		if ( emailChanged && emailExists( normalizedEmail ) ) {
+			return { success = false, code = "email_exists" };
+		}
+		queryExecute(
+			"UPDATE app_user
+			 SET display_name = :displayName,
+			     email = :email,
+			     locale = :locale,
+			     email_verified_at = CASE WHEN CAST(:emailChanged AS BOOLEAN) THEN NULL ELSE email_verified_at END,
+			     updated_at = now()
+			 WHERE id = CAST(:userId AS UUID)",
+			{
+				displayName = normalizedName,
+				email = normalizedEmail,
+				locale = arguments.locale,
+				emailChanged = emailChanged,
+				userId = arguments.userId
+			}
+		);
+		return {
+			success = true,
+			emailChanged = emailChanged,
+			user = {
+				id = arguments.userId,
+				email = normalizedEmail,
+				displayName = normalizedName,
+				locale = arguments.locale,
+				emailVerified = !emailChanged
+			},
+			verificationToken = emailChanged
+				? tokenService.createAuthToken( arguments.userId, "email_verification", 1440 )
+				: ""
+		};
+	}
+
+	struct function changePassword(
+		required string userId,
+		required string currentPassword,
+		required string newPassword
+	){
+		if ( arguments.newPassword.len() < 10 ) {
+			return { success = false, code = "password" };
+		}
+		var users = queryExecute(
+			"SELECT password_hash FROM app_user WHERE id = CAST(:userId AS UUID)",
+			{ userId = arguments.userId },
+			{ returntype = "array" }
+		);
+		if ( !users.len() ) return { success = false, code = "not_found" };
+		if (
+			!isNull( users[ 1 ].password_hash )
+			&& !passwordService.verifyPassword( arguments.currentPassword, users[ 1 ].password_hash )
+		) {
+			return { success = false, code = "current_password" };
+		}
+		queryExecute(
+			"UPDATE app_user SET password_hash = :passwordHash, updated_at = now()
+			 WHERE id = CAST(:userId AS UUID)",
+			{
+				passwordHash = passwordService.hashPassword( arguments.newPassword ),
+				userId = arguments.userId
+			}
+		);
+		return { success = true };
+	}
+
 	private void function provisionWorkspace(
 		required string userId,
 		required string workspaceId,

@@ -174,6 +174,13 @@ component singleton {
 				billingInterval = nullableText( sessionData.metadata.billing_interval ?: "" )
 			}
 		);
+		if ( listFindNoCase( "paid,no_payment_required", sessionData.payment_status ?: "" ) ) {
+			queryExecute(
+				"UPDATE workspace SET plan = 'premium', updated_at = now()
+				 WHERE id = CAST(:workspaceId AS UUID)",
+				{ workspaceId = workspaceId }
+			);
+		}
 	}
 
 	private void function syncSubscription( required struct subscription, required string eventType ){
@@ -193,6 +200,10 @@ component singleton {
 			interval = subscription.items.data[ 1 ].price.recurring.interval ?: "";
 		}
 		var premium = listFindNoCase( "active,trialing,past_due", status ) > 0;
+		var periodEnd = subscription.current_period_end ?: 0;
+		if ( !periodEnd && ( subscription.items.data ?: [] ).len() ) {
+			periodEnd = subscription.items.data[ 1 ].current_period_end ?: 0;
+		}
 		queryExecute(
 			"INSERT INTO workspace_billing
 			    (workspace_id, stripe_customer_id, stripe_subscription_id, stripe_price_id,
@@ -216,7 +227,7 @@ component singleton {
 				priceId = nullableText( priceId ),
 				status = status,
 				billingInterval = nullableText( interval ),
-				periodEnd = nullableTimestamp( subscription.current_period_end ?: 0 ),
+				periodEnd = nullableTimestamp( periodEnd ),
 				cancelAtPeriodEnd = subscription.cancel_at_period_end ?: false
 			}
 		);

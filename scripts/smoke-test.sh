@@ -8,10 +8,11 @@ app_html="$(mktemp)"
 check_email_html="$(mktemp)"
 members_html="$(mktemp)"
 billing_html="$(mktemp)"
+profile_html="$(mktemp)"
 invitation_html="$(mktemp)"
 member_cookie_jar="$(mktemp)"
 member_signup_html="$(mktemp)"
-trap 'rm -f "$cookie_jar" "$signup_html" "$app_html" "$check_email_html" "$members_html" "$billing_html" "$invitation_html" "$member_cookie_jar" "$member_signup_html"' EXIT
+trap 'rm -f "$cookie_jar" "$signup_html" "$app_html" "$check_email_html" "$members_html" "$billing_html" "$profile_html" "$invitation_html" "$member_cookie_jar" "$member_signup_html"' EXIT
 
 curl --fail --silent --show-error --cookie-jar "$cookie_jar" "$base_url/signup" > "$signup_html"
 csrf_token="$(sed -n 's/.*name="csrfToken" value="\([^"]*\)".*/\1/p' "$signup_html" | head -1)"
@@ -52,6 +53,43 @@ curl --fail --silent --show-error --cookie "$cookie_jar" "$base_url/app/billing"
 grep --quiet "Plan and billing" "$billing_html"
 curl --fail --silent --show-error --cookie "$cookie_jar" "$base_url/app/billing/status" \
   | grep --quiet '"plan":"free"'
+curl --fail --silent --show-error --cookie "$cookie_jar" "$base_url/app/profile" > "$profile_html"
+grep --quiet "Your profile" "$profile_html"
+grep --quiet "Workspace plan" "$profile_html"
+grep --quiet "My work" "$profile_html"
+grep --quiet "Automations" "$profile_html"
+profile_csrf="$(
+  sed -n '/action="\/app\/profile\/details"/,/<\/form>/p' "$profile_html" \
+    | sed -n 's/.*name="csrfToken" value="\([^"]*\)".*/\1/p' \
+    | head -1
+)"
+password_csrf="$(
+  sed -n '/action="\/app\/profile\/password"/,/<\/form>/p' "$profile_html" \
+    | sed -n 's/.*name="csrfToken" value="\([^"]*\)".*/\1/p' \
+    | head -1
+)"
+test -n "$profile_csrf"
+test -n "$password_csrf"
+profile_update_status="$(
+  curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+    --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+    --request POST "$base_url/app/profile/details" \
+    --data-urlencode "csrfToken=$profile_csrf" \
+    --data-urlencode "displayName=CI Owner Updated" \
+    --data-urlencode "email=$test_email" \
+    --data-urlencode "locale=en_US"
+)"
+test "$profile_update_status" = "302"
+password_update_status="$(
+  curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+    --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+    --request POST "$base_url/app/profile/password" \
+    --data-urlencode "csrfToken=$password_csrf" \
+    --data-urlencode "currentPassword=CI-secure-password-2026" \
+    --data-urlencode "newPassword=CI-updated-password-2026" \
+    --data-urlencode "confirmPassword=CI-updated-password-2026"
+)"
+test "$password_update_status" = "302"
 
 csrf_token="$(sed -n 's/.*data-csrf-token="\([^"]*\)".*/\1/p' "$app_html" | head -1)"
 column_id="$(grep -o 'data-column-id="[^"]*"' "$app_html" | head -1 | cut -d'"' -f2)"

@@ -9,6 +9,9 @@ component {
         post( "/app/billing/portal" ).to( "Billing.portal" );
         route( "/app/billing/status" ).to( "Billing.status" );
         route( "/app/billing" ).to( "Billing.index" );
+        post( "/app/profile/password" ).to( "Profile.changePassword" );
+        post( "/app/profile/details" ).to( "Profile.update" );
+        route( "/app/profile" ).to( "Profile.index" );
         post( "/app/members/invite" ).to( "App.inviteMember" );
         route( "/app/members" ).to( "App.members" );
         post( "/app/cards/:cardId/move" ).to( "App.moveCard" );

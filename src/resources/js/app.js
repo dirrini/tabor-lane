@@ -54,7 +54,7 @@
       } catch (error) {
         // A temporary network failure is handled by the next polling attempt.
       }
-      if (Date.now() - startedAt < 30000) {
+      if (Date.now() - startedAt < 120000) {
         window.setTimeout(pollBilling, 1000);
       }
     };

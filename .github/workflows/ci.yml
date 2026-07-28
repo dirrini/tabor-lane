@@ -38,13 +38,31 @@ jobs:
               --connect-timeout 5 --max-time 15 "$@"
           }
 
+          assert_contains() {
+            local label="$1"
+            local file="$2"
+            local expected="$3"
+            if ! grep --quiet "$expected" "$file"; then
+              echo "::error title=${label} verification failed::Expected '${expected}' in ${file}"
+              return 1
+            fi
+            echo "${label}: OK"
+          }
+
           retry_curl http://localhost:8090/health/live > /dev/null
+          echo "Liveness endpoint: OK"
           retry_curl http://localhost:8090/health/ready > /dev/null
+          echo "Readiness endpoint: OK"
           retry_curl --output /tmp/tabor-lane-home.html http://localhost:8090/
-          grep --quiet "TaborLane" /tmp/tabor-lane-home.html
+          assert_contains "Landing page" /tmp/tabor-lane-home.html "Tabor Lane"
           retry_curl --output /tmp/tabor-lane-login.html http://localhost:8090/login
-          grep --quiet "TaborLane" /tmp/tabor-lane-login.html
-          test "$(retry_curl --output /dev/null --write-out '%{http_code}' http://localhost:8090/app)" = "302"
+          assert_contains "Login page" /tmp/tabor-lane-login.html "Tabor Lane"
+          app_status="$(retry_curl --output /dev/null --write-out '%{http_code}' http://localhost:8090/app)"
+          if [[ "$app_status" != "302" ]]; then
+            echo "::error title=Authentication redirect failed::Expected 302 from /app, received ${app_status}"
+            exit 1
+          fi
+          echo "Authentication redirect: OK"
           docker compose exec -T postgres psql -U tabor_lane -d tabor_lane \
             -c "SELECT COUNT(*) FROM workspace;"
           docker compose run --rm minio-init

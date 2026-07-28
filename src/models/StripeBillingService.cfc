@@ -81,9 +81,9 @@ component singleton {
 			"allow_promotion_codes" = "true"
 		};
 		if ( billing.customerId.len() ) {
-			fields.customer = billing.customerId;
+			fields[ "customer" ] = billing.customerId;
 		} else {
-			fields.customer_email = lCase( trim( arguments.email ) );
+			fields[ "customer_email" ] = lCase( trim( arguments.email ) );
 		}
 		var response = stripePost( "/v1/checkout/sessions", fields );
 		return response.success && ( response.data.url ?: "" ).len()
@@ -247,9 +247,15 @@ component singleton {
 			}
 			var status = val( response.statusCode ?: 0 );
 			var data = deserializeJSON( response.fileContent ?: "{}" );
-			return status >= 200 && status < 300
-				? { success = true, data = data }
-				: { success = false, status = status, data = data };
+			if ( status >= 200 && status < 300 ) {
+				return { success = true, data = data };
+			}
+			writeLog(
+				file = "application",
+				type = "error",
+				text = "Stripe API rejected request. Status: #status#; type: #data.error.type ?: 'unknown'#; code: #data.error.code ?: 'unknown'#; message: #data.error.message ?: 'No message'#"
+			);
+			return { success = false, status = status, data = data };
 		} catch ( any exception ) {
 			writeLog( file = "application", type = "error", text = "Stripe API request failed: #exception.message#" );
 			return { success = false };

@@ -60,6 +60,8 @@ Use the pooled Neon hostname and require TLS. Production configuration includes:
 - `DB_SSL_MODE=require`
 - `APP_BASE_URL`
 - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`
+- `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`
+- `STRIPE_PRICE_PREMIUM_MONTHLY`, `STRIPE_PRICE_PREMIUM_YEARLY`
 - `BREVO_API_KEY`, `BREVO_SENDER_EMAIL`, `BREVO_SENDER_NAME`
 - `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`
 
@@ -70,6 +72,10 @@ Google login uses the backend Authorization Code flow with the exact callback
 URI `${APP_BASE_URL}/auth/google/callback`. Only verified Google email addresses
 are accepted. If that email already belongs to an account, Google is linked to
 the existing user instead of creating a duplicate.
+
+Premium billing uses Stripe-hosted Checkout and the Customer Portal. Stripe
+webhooks are verified and processed idempotently at `/stripe/webhook`; only
+confirmed subscription status events change the workspace plan.
 
 Stop and preserve data:
 

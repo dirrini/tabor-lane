@@ -4,6 +4,10 @@ component {
         setFullRewrites( true );
 
         route( "/" ).to( "Home.index" );
+        post( "/stripe/webhook" ).to( "Billing.webhook" );
+        post( "/app/billing/checkout" ).to( "Billing.checkout" );
+        post( "/app/billing/portal" ).to( "Billing.portal" );
+        route( "/app/billing" ).to( "Billing.index" );
         post( "/app/members/invite" ).to( "App.inviteMember" );
         route( "/app/members" ).to( "App.members" );
         post( "/app/cards/:cardId/move" ).to( "App.moveCard" );

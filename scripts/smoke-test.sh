@@ -7,10 +7,11 @@ signup_html="$(mktemp)"
 app_html="$(mktemp)"
 check_email_html="$(mktemp)"
 members_html="$(mktemp)"
+billing_html="$(mktemp)"
 invitation_html="$(mktemp)"
 member_cookie_jar="$(mktemp)"
 member_signup_html="$(mktemp)"
-trap 'rm -f "$cookie_jar" "$signup_html" "$app_html" "$check_email_html" "$members_html" "$invitation_html" "$member_cookie_jar" "$member_signup_html"' EXIT
+trap 'rm -f "$cookie_jar" "$signup_html" "$app_html" "$check_email_html" "$members_html" "$billing_html" "$invitation_html" "$member_cookie_jar" "$member_signup_html"' EXIT
 
 curl --fail --silent --show-error --cookie-jar "$cookie_jar" "$base_url/signup" > "$signup_html"
 csrf_token="$(sed -n 's/.*name="csrfToken" value="\([^"]*\)".*/\1/p' "$signup_html" | head -1)"
@@ -46,6 +47,10 @@ grep --quiet "CI Workspace" "$app_html"
 grep --quiet "owner" "$app_html"
 grep --quiet "data-column-id=" "$app_html"
 grep --quiet "data-card-id=" "$app_html"
+
+curl --fail --silent --show-error --cookie "$cookie_jar" "$base_url/app/billing" > "$billing_html"
+grep --quiet "Plan and billing" "$billing_html"
+grep --quiet "Premium checkout will be available after Stripe is configured." "$billing_html"
 
 csrf_token="$(sed -n 's/.*data-csrf-token="\([^"]*\)".*/\1/p' "$app_html" | head -1)"
 column_id="$(grep -o 'data-column-id="[^"]*"' "$app_html" | head -1 | cut -d'"' -f2)"

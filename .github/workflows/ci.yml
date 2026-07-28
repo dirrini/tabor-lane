@@ -32,11 +32,19 @@ jobs:
 
       - name: Verify application and dependencies
         run: |
-          curl --fail --retry 12 --retry-delay 5 http://localhost:8090/health/live
-          curl --fail --retry 12 --retry-delay 5 http://localhost:8090/health/ready
-          curl --fail http://localhost:8090/ | grep --quiet "TaborLane"
-          curl --fail http://localhost:8090/login | grep --quiet "TaborLane"
-          test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://localhost:8090/app)" = "302"
+          retry_curl() {
+            curl --fail --silent --show-error \
+              --retry 12 --retry-delay 5 --retry-all-errors \
+              --connect-timeout 5 --max-time 15 "$@"
+          }
+
+          retry_curl http://localhost:8090/health/live > /dev/null
+          retry_curl http://localhost:8090/health/ready > /dev/null
+          retry_curl --output /tmp/tabor-lane-home.html http://localhost:8090/
+          grep --quiet "TaborLane" /tmp/tabor-lane-home.html
+          retry_curl --output /tmp/tabor-lane-login.html http://localhost:8090/login
+          grep --quiet "TaborLane" /tmp/tabor-lane-login.html
+          test "$(retry_curl --output /dev/null --write-out '%{http_code}' http://localhost:8090/app)" = "302"
           docker compose exec -T postgres psql -U tabor_lane -d tabor_lane \
             -c "SELECT COUNT(*) FROM workspace;"
           docker compose run --rm minio-init

@@ -4,11 +4,16 @@ component {
     property name="workspaceService" inject="WorkspaceService";
     property name="notificationService" inject="NotificationService";
     property name="rateLimitService" inject="RateLimitService";
+    property name="googleOAuthService" inject="GoogleOAuthService";
 
     this.allowedMethods = {
         login = "GET",
         signup = "GET",
         authenticate = "POST",
+        googleStart = "GET",
+        googleCallback = "GET",
+        googleOnboarding = "GET",
+        completeGoogleRegistration = "POST",
         register = "POST",
         checkEmail = "GET",
         verifyEmail = "GET",
@@ -36,6 +41,10 @@ component {
             }
         }
         prc.csrfToken = csrfGenerateToken( "login" );
+        prc.googleOAuthEnabled = googleOAuthService.isConfigured();
+        if ( ( rc.oauth ?: "" ) == "failed" ) {
+            prc.errors.append( $r( "auth.google.error" ) );
+        }
         event.setView( "auth/login" );
     }
 
@@ -59,6 +68,7 @@ component {
             }
         }
         prc.csrfToken = csrfGenerateToken( "signup" );
+        prc.googleOAuthEnabled = googleOAuthService.isConfigured();
         event.setView( "auth/signup" );
     }
 
@@ -101,6 +111,7 @@ component {
         }
 
         prc.csrfToken = csrfGenerateToken( "login", true );
+        prc.googleOAuthEnabled = googleOAuthService.isConfigured();
         event.setView( "auth/login" );
     }
 
@@ -167,7 +178,136 @@ component {
         }
 
         prc.csrfToken = csrfGenerateToken( "signup", true );
+        prc.googleOAuthEnabled = googleOAuthService.isConfigured();
         event.setView( "auth/signup" );
+    }
+
+    function googleStart( event, rc, prc ) {
+        redirectAuthenticated();
+        if ( !googleOAuthService.isConfigured() ) {
+            relocate( uri = "/login?oauth=failed" );
+        }
+        var state = lCase( hash( createUUID() & getTickCount() & randRange( 100000, 999999 ), "SHA-256" ) );
+        session.googleOAuthState = {
+            value = state,
+            expiresAt = dateAdd( "n", 10, now() ),
+            invitationToken = trim( rc.invitationToken ?: "" )
+        };
+        relocate( uri = googleOAuthService.authorizationUrl( state ) );
+    }
+
+    function googleCallback( event, rc, prc ) {
+        redirectAuthenticated();
+        var oauthState = session.googleOAuthState ?: {};
+        structDelete( session, "googleOAuthState" );
+        if (
+            ( rc.error ?: "" ).len()
+            || !( rc.code ?: "" ).len()
+            || !( rc.state ?: "" ).len()
+            || !( oauthState.value ?: "" ).len()
+            || !constantTimeEquals( rc.state, oauthState.value )
+            || isNull( oauthState.expiresAt )
+            || oauthState.expiresAt < now()
+        ) {
+            relocate( uri = "/login?oauth=failed" );
+        }
+
+        var providerResult = googleOAuthService.exchangeCode( rc.code );
+        if ( !providerResult.success ) {
+            relocate( uri = "/login?oauth=failed" );
+        }
+        var authResult = authService.authenticateExternal(
+            provider = "google",
+            subject = providerResult.profile.subject,
+            email = providerResult.profile.email
+        );
+        if ( authResult.success ) {
+            authResult.user = acceptPendingInvitation( authResult.user, oauthState.invitationToken ?: "" );
+            establishSession( authResult.user );
+            setFWLocale( authResult.user.locale );
+            relocate( uri = "/app" );
+        }
+        if ( !( authResult.needsRegistration ?: false ) ) {
+            relocate( uri = "/login?oauth=failed" );
+        }
+
+        session.pendingGoogleRegistration = {
+            profile = providerResult.profile,
+            invitationToken = oauthState.invitationToken ?: "",
+            expiresAt = dateAdd( "n", 10, now() )
+        };
+        relocate( uri = "/auth/google/onboarding" );
+    }
+
+    function googleOnboarding( event, rc, prc ) {
+        redirectAuthenticated();
+        var pending = pendingGoogleRegistration();
+        if ( !pending.found ) {
+            relocate( uri = "/login?oauth=failed" );
+        }
+        prc.page = "google-onboarding";
+        prc.pageTitle = $r( "auth.google.onboarding.title" );
+        prc.errors = [];
+        prc.profile = pending.data.profile;
+        prc.invitation = ( pending.data.invitationToken ?: "" ).len()
+            ? workspaceService.inspectInvitation( pending.data.invitationToken )
+            : { found = false };
+        prc.formData = {
+            displayName = prc.profile.displayName,
+            workspaceName = ""
+        };
+        prc.csrfToken = csrfGenerateToken( "google-onboarding" );
+        event.setView( "auth/googleOnboarding" );
+    }
+
+    function completeGoogleRegistration( event, rc, prc ) {
+        redirectAuthenticated();
+        var pending = pendingGoogleRegistration();
+        if ( !pending.found ) {
+            relocate( uri = "/login?oauth=failed" );
+        }
+        prc.page = "google-onboarding";
+        prc.pageTitle = $r( "auth.google.onboarding.title" );
+        prc.errors = [];
+        prc.profile = pending.data.profile;
+        prc.invitation = ( pending.data.invitationToken ?: "" ).len()
+            ? workspaceService.inspectInvitation( pending.data.invitationToken )
+            : { found = false };
+        prc.formData = {
+            displayName = trim( rc.displayName ?: "" ),
+            workspaceName = trim( rc.workspaceName ?: "" )
+        };
+
+        if ( !csrfVerifyToken( rc.csrfToken ?: "", "google-onboarding" ) ) {
+            prc.errors.append( $r( "auth.error.expired" ) );
+        } else if (
+            !prc.formData.displayName.len()
+            || ( !prc.invitation.found && !prc.formData.workspaceName.len() )
+        ) {
+            prc.errors.append( $r( "auth.error.required" ) );
+        }
+
+        if ( !prc.errors.len() ) {
+            var result = authService.registerExternal(
+                provider = "google",
+                subject = prc.profile.subject,
+                email = prc.profile.email,
+                displayName = prc.formData.displayName,
+                workspaceName = prc.formData.workspaceName,
+                locale = getFWLocale(),
+                invitationToken = pending.data.invitationToken ?: ""
+            );
+            if ( result.success ) {
+                structDelete( session, "pendingGoogleRegistration" );
+                establishSession( result.user );
+                setFWLocale( result.user.locale );
+                relocate( uri = "/app" );
+            }
+            prc.errors.append( $r( "auth.google.error" ) );
+        }
+
+        prc.csrfToken = csrfGenerateToken( "google-onboarding", true );
+        event.setView( "auth/googleOnboarding" );
     }
 
     function checkEmail( event, rc, prc ) {
@@ -294,6 +434,49 @@ component {
         sessionRotate();
         session.auth = duplicate( arguments.user );
         session.authenticatedAt = now();
+    }
+
+    private struct function acceptPendingInvitation( required struct user, string invitationToken = "" ) {
+        if ( !trim( arguments.invitationToken ).len() ) {
+            return arguments.user;
+        }
+        var acceptance = workspaceService.acceptInvitation(
+            token = arguments.invitationToken,
+            userId = arguments.user.id,
+            userEmail = arguments.user.email
+        );
+        if ( acceptance.success ) {
+            arguments.user.workspaceId = acceptance.workspaceId;
+            arguments.user.workspaceName = acceptance.workspaceName;
+            arguments.user.role = acceptance.role;
+        }
+        return arguments.user;
+    }
+
+    private struct function pendingGoogleRegistration() {
+        if (
+            !structKeyExists( session, "pendingGoogleRegistration" )
+            || isNull( session.pendingGoogleRegistration.expiresAt )
+            || session.pendingGoogleRegistration.expiresAt < now()
+        ) {
+            structDelete( session, "pendingGoogleRegistration" );
+            return { found = false };
+        }
+        return { found = true, data = session.pendingGoogleRegistration };
+    }
+
+    private boolean function constantTimeEquals( required string first, required string second ) {
+        if ( arguments.first.len() != arguments.second.len() ) {
+            return false;
+        }
+        var difference = 0;
+        for ( var index = 1; index <= arguments.first.len(); index++ ) {
+            difference = bitOr(
+                difference,
+                bitXor( asc( mid( arguments.first, index, 1 ) ), asc( mid( arguments.second, index, 1 ) ) )
+            );
+        }
+        return difference == 0;
     }
 
     private void function redirectAuthenticated() {

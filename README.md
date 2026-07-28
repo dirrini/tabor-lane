@@ -24,6 +24,7 @@ PostgreSQL.
 - Neon PostgreSQL for production
 - Upstash Redis for distributed rate limiting
 - Brevo for transactional email
+- Google OpenID Connect for optional social login
 - Stripe for subscriptions and billing
 - Cloudflare R2 for production attachment storage
 
@@ -58,11 +59,17 @@ Use the pooled Neon hostname and require TLS. Production configuration includes:
 - `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`
 - `DB_SSL_MODE=require`
 - `APP_BASE_URL`
+- `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`
 - `BREVO_API_KEY`, `BREVO_SENDER_EMAIL`, `BREVO_SENDER_NAME`
 - `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`
 
 Database migrations live in `scripts/postgres/migrations`. They run before the
 application starts in both development and production.
+
+Google login uses the backend Authorization Code flow with the exact callback
+URI `${APP_BASE_URL}/auth/google/callback`. Only verified Google email addresses
+are accepted. If that email already belongs to an account, Google is linked to
+the existing user instead of creating a duplicate.
 
 Stop and preserve data:
 

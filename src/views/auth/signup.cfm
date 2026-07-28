@@ -17,6 +17,14 @@
             </div>
         </cfif>
 
+        <cfif prc.googleOAuthEnabled>
+            <a class="button button-outline auth-google" href="/auth/google?invitationToken=#encodeForURL( prc.formData.invitationToken )#">
+                <svg class="icon google-icon" aria-hidden="true"><use href="/resources/icons.svg##google"></use></svg>
+                #$r( "auth.google" )#
+            </a>
+            <div class="auth-divider"><span>#$r( "auth.or" )#</span></div>
+        </cfif>
+
         <form class="auth-form" method="post" action="/auth/register">
             <input type="hidden" name="csrfToken" value="#encodeForHTMLAttribute( prc.csrfToken )#">
             <input type="hidden" name="invitationToken" value="#encodeForHTMLAttribute( prc.formData.invitationToken )#">

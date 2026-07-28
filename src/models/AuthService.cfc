@@ -113,6 +113,204 @@ component singleton {
 		return { success = true, user = mapUser( users[ 1 ] ) };
 	}
 
+	struct function authenticateExternal(
+		required string provider,
+		required string subject,
+		required string email
+	){
+		var normalizedEmail = lCase( trim( arguments.email ) );
+		var identities = queryExecute(
+			"SELECT CAST(u.id AS TEXT) AS id, u.email, u.display_name, u.locale,
+			        (u.email_verified_at IS NOT NULL) AS email_verified,
+			        CAST(w.id AS TEXT) AS workspace_id, w.name AS workspace_name, wm.role
+			 FROM external_identity ei
+			 JOIN app_user u ON u.id = ei.user_id
+			 JOIN workspace_member wm ON wm.user_id = u.id
+			 JOIN workspace w ON w.id = wm.workspace_id
+			 WHERE ei.provider = :provider
+			   AND ei.provider_subject = :subject
+			 ORDER BY wm.created_at
+			 LIMIT 1",
+			{ provider = arguments.provider, subject = arguments.subject },
+			{ returntype = "array" }
+		);
+		if ( identities.len() ) {
+			queryExecute(
+				"UPDATE external_identity
+				 SET provider_email = :email, last_login_at = now()
+				 WHERE provider = :provider AND provider_subject = :subject",
+				{
+					email = normalizedEmail,
+					provider = arguments.provider,
+					subject = arguments.subject
+				}
+			);
+			return { success = true, user = mapUser( identities[ 1 ] ) };
+		}
+
+		var users = queryExecute(
+			"SELECT CAST(id AS TEXT) AS id
+			 FROM app_user
+			 WHERE email = :email",
+			{ email = normalizedEmail },
+			{ returntype = "array" }
+		);
+		if ( !users.len() ) {
+			return { success = false, needsRegistration = true };
+		}
+
+		var linked = false;
+		transaction {
+			queryExecute(
+				"INSERT INTO external_identity (user_id, provider, provider_subject, provider_email)
+				 VALUES (CAST(:userId AS UUID), :provider, :subject, :email)
+				 ON CONFLICT DO NOTHING",
+				{
+					userId = users[ 1 ].id,
+					provider = arguments.provider,
+					subject = arguments.subject,
+					email = normalizedEmail
+				}
+			);
+			var matchingIdentity = queryExecute(
+				"SELECT EXISTS(
+				    SELECT 1 FROM external_identity
+				    WHERE user_id = CAST(:userId AS UUID)
+				      AND provider = :provider
+				      AND provider_subject = :subject
+				 ) AS found",
+				{
+					userId = users[ 1 ].id,
+					provider = arguments.provider,
+					subject = arguments.subject
+				},
+				{ returntype = "array" }
+			);
+			linked = matchingIdentity[ 1 ].found;
+			if ( linked ) {
+				queryExecute(
+					"UPDATE app_user
+					 SET email_verified_at = COALESCE(email_verified_at, now()), updated_at = now()
+					 WHERE id = CAST(:userId AS UUID)",
+					{ userId = users[ 1 ].id }
+				);
+			}
+		}
+		if ( !linked ) {
+			return { success = false, code = "identity_conflict" };
+		}
+		return { success = true, user = loadUser( users[ 1 ].id ) };
+	}
+
+	struct function registerExternal(
+		required string provider,
+		required string subject,
+		required string email,
+		required string displayName,
+		required string workspaceName,
+		string locale = "en_US",
+		string invitationToken = ""
+	){
+		var normalizedEmail = lCase( trim( arguments.email ) );
+		var existing = authenticateExternal(
+			provider = arguments.provider,
+			subject = arguments.subject,
+			email = normalizedEmail
+		);
+		if ( existing.success ) {
+			return existing;
+		}
+		if ( !( existing.needsRegistration ?: false ) ) {
+			return existing;
+		}
+
+		var invitation = {};
+		if ( arguments.invitationToken.len() ) {
+			invitation = findInvitation( arguments.invitationToken );
+			if ( !invitation.found || invitation.email != normalizedEmail ) {
+				return { success = false, code = "invalid_invitation" };
+			}
+		} else if ( !trim( arguments.workspaceName ).len() ) {
+			return { success = false, code = "workspace_required" };
+		}
+
+		var hasInvitation = invitation.found ?: false;
+		var userId = lCase( createUUID() );
+		var workspaceId = hasInvitation ? invitation.workspaceId : lCase( createUUID() );
+		var workspaceDisplayName = hasInvitation ? invitation.workspaceName : trim( arguments.workspaceName );
+		var workspaceRole = hasInvitation ? invitation.role : "owner";
+
+		try {
+			transaction {
+				queryExecute(
+					"INSERT INTO app_user (id, email, display_name, password_hash, locale, email_verified_at)
+					 VALUES (CAST(:id AS UUID), :email, :displayName, NULL, :locale, now())",
+					{
+						id = userId,
+						email = normalizedEmail,
+						displayName = trim( arguments.displayName ),
+						locale = arguments.locale
+					}
+				);
+				queryExecute(
+					"INSERT INTO external_identity (user_id, provider, provider_subject, provider_email)
+					 VALUES (CAST(:userId AS UUID), :provider, :subject, :email)",
+					{
+						userId = userId,
+						provider = arguments.provider,
+						subject = arguments.subject,
+						email = normalizedEmail
+					}
+				);
+
+				if ( hasInvitation ) {
+					queryExecute(
+						"INSERT INTO workspace_member (workspace_id, user_id, role)
+						 VALUES (CAST(:workspaceId AS UUID), CAST(:userId AS UUID), :role)",
+						{
+							workspaceId = workspaceId,
+							userId = userId,
+							role = workspaceRole
+						}
+					);
+					queryExecute(
+						"UPDATE workspace_invitation SET accepted_at = now()
+						 WHERE id = CAST(:invitationId AS UUID)",
+						{ invitationId = invitation.id }
+					);
+				} else {
+					provisionWorkspace(
+						userId = userId,
+						workspaceId = workspaceId,
+						workspaceName = workspaceDisplayName,
+						locale = arguments.locale
+					);
+				}
+			}
+		} catch ( database exception ) {
+			var raced = authenticateExternal(
+				provider = arguments.provider,
+				subject = arguments.subject,
+				email = normalizedEmail
+			);
+			return raced.success ? raced : { success = false, code = "registration_failed" };
+		}
+
+		return {
+			success = true,
+			user = {
+				id = userId,
+				email = normalizedEmail,
+				displayName = trim( arguments.displayName ),
+				workspaceId = workspaceId,
+				workspaceName = workspaceDisplayName,
+				role = workspaceRole,
+				locale = arguments.locale,
+				emailVerified = true
+			}
+		};
+	}
+
 	struct function verifyEmail( required string token ){
 		var consumed = tokenService.consumeAuthToken( arguments.token, "email_verification" );
 		if ( !consumed.success ) {
@@ -299,6 +497,23 @@ component singleton {
 			locale = arguments.row.locale,
 			emailVerified = arguments.row.email_verified
 		};
+	}
+
+	private struct function loadUser( required string userId ){
+		var users = queryExecute(
+			"SELECT CAST(u.id AS TEXT) AS id, u.email, u.display_name, u.locale,
+			        (u.email_verified_at IS NOT NULL) AS email_verified,
+			        CAST(w.id AS TEXT) AS workspace_id, w.name AS workspace_name, wm.role
+			 FROM app_user u
+			 JOIN workspace_member wm ON wm.user_id = u.id
+			 JOIN workspace w ON w.id = wm.workspace_id
+			 WHERE u.id = CAST(:userId AS UUID)
+			 ORDER BY wm.created_at
+			 LIMIT 1",
+			{ userId = arguments.userId },
+			{ returntype = "array" }
+		);
+		return users.len() ? mapUser( users[ 1 ] ) : {};
 	}
 
 	private boolean function emailExists( required string email ){

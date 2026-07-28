@@ -15,6 +15,9 @@ services:
       DB_PASSWORD: ${DB_PASSWORD:-tabor_lane_local}
       DB_SSL_MODE: disable
       APP_BASE_URL: ${APP_BASE_URL:-http://localhost:8090}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-http://localhost:8090/auth/google/callback}
       BREVO_API_KEY: ${BREVO_API_KEY:-}
       BREVO_SENDER_EMAIL: ${BREVO_SENDER_EMAIL:-notifications@taborlane.local}
       BREVO_SENDER_NAME: ${BREVO_SENDER_NAME:-Tabor Lane}

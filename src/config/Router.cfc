@@ -11,6 +11,10 @@ component {
         route( "/app" ).to( "App.index" );
         post( "/auth/logout" ).to( "Auth.logout" );
         post( "/auth/login" ).to( "Auth.authenticate" );
+        route( "/auth/google" ).to( "Auth.googleStart" );
+        route( "/auth/google/callback" ).to( "Auth.googleCallback" );
+        post( "/auth/google/complete" ).to( "Auth.completeGoogleRegistration" );
+        route( "/auth/google/onboarding" ).to( "Auth.googleOnboarding" );
         route( "/login" ).to( "Auth.login" );
         post( "/auth/register" ).to( "Auth.register" );
         route( "/signup" ).to( "Auth.signup" );

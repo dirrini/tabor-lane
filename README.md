@@ -77,6 +77,16 @@ Premium billing uses Stripe-hosted Checkout and the Customer Portal. Stripe
 webhooks are verified and processed idempotently at `/stripe/webhook`; only
 confirmed subscription status events change the workspace plan.
 
+For local webhook forwarding, the Stripe CLI runs as an opt-in Compose service:
+
+```powershell
+docker compose --profile stripe up stripe-cli
+```
+
+Copy the `whsec_` signing secret printed by that container to
+`STRIPE_WEBHOOK_SECRET` in `.env`, then recreate `app` while keeping
+`stripe-cli` running.
+
 Stop and preserve data:
 
 ```powershell

@@ -121,6 +121,24 @@ services:
     networks:
       - tabor-lane
 
+  stripe-cli:
+    image: stripe/stripe-cli:latest
+    profiles: ["stripe"]
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      STRIPE_API_KEY: ${STRIPE_SECRET_KEY:-}
+    command:
+      - listen
+      - --events
+      - checkout.session.completed,checkout.session.async_payment_succeeded,invoice.paid,invoice.payment_failed,customer.subscription.created,customer.subscription.updated,customer.subscription.deleted
+      - --forward-to
+      - http://app:8080/stripe/webhook
+    restart: unless-stopped
+    networks:
+      - tabor-lane
+
 volumes:
   postgres-app-data:
   minio-data:

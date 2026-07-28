@@ -5,6 +5,7 @@ component {
 
     this.allowedMethods = {
         index = "GET",
+        status = "GET",
         checkout = "POST",
         portal = "POST",
         webhook = "POST"
@@ -49,6 +50,17 @@ component {
             relocate( uri = result.url );
         }
         relocate( uri = "/app/billing?error=#urlEncodedFormat( result.code )#" );
+    }
+
+    function status( event, rc, prc ) {
+        var billing = stripeBillingService.getBilling( prc.auth.id, prc.auth.workspaceId );
+        event.renderData(
+            type = "json",
+            data = {
+                "plan" = billing.plan ?: "free",
+                "status" = billing.status ?: "none"
+            }
+        );
     }
 
     function portal( event, rc, prc ) {

@@ -35,6 +35,32 @@
     });
   }
 
+  const pendingBilling = document.querySelector("[data-billing-pending]");
+  if (pendingBilling) {
+    const startedAt = Date.now();
+    const pollBilling = async () => {
+      try {
+        const response = await fetch(pendingBilling.dataset.billingStatusUrl, {
+          headers: { Accept: "application/json" },
+          cache: "no-store",
+        });
+        if (response.ok) {
+          const billing = await response.json();
+          if (billing.plan === "premium") {
+            window.location.replace("/app/billing");
+            return;
+          }
+        }
+      } catch (error) {
+        // A temporary network failure is handled by the next polling attempt.
+      }
+      if (Date.now() - startedAt < 30000) {
+        window.setTimeout(pollBilling, 1000);
+      }
+    };
+    window.setTimeout(pollBilling, 500);
+  }
+
   const workspace = document.querySelector("[data-workspace]");
   if (workspace) {
     const cardForm = workspace.querySelector("[data-card-form]");

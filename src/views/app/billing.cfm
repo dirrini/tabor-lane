@@ -1,5 +1,5 @@
 <cfoutput>
-<main class="workspace-shell">
+<main class="workspace-shell"<cfif prc.checkoutNotice == "success" && prc.billing.plan != "premium"> data-billing-pending data-billing-status-url="/app/billing/status"</cfif>>
     <aside class="workspace-sidebar">
         <a class="brand" href="/"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><span class="brand-name">Tabor<span>Lane</span></span></a>
         <div class="workspace-picker">

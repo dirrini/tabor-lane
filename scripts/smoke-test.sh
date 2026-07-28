@@ -50,7 +50,8 @@ grep --quiet "data-card-id=" "$app_html"
 
 curl --fail --silent --show-error --cookie "$cookie_jar" "$base_url/app/billing" > "$billing_html"
 grep --quiet "Plan and billing" "$billing_html"
-grep --quiet "Premium checkout will be available after Stripe is configured." "$billing_html"
+curl --fail --silent --show-error --cookie "$cookie_jar" "$base_url/app/billing/status" \
+  | grep --quiet '"plan":"free"'
 
 csrf_token="$(sed -n 's/.*data-csrf-token="\([^"]*\)".*/\1/p' "$app_html" | head -1)"
 column_id="$(grep -o 'data-column-id="[^"]*"' "$app_html" | head -1 | cut -d'"' -f2)"

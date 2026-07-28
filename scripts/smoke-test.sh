@@ -5,7 +5,12 @@ base_url="${APP_BASE_URL:-http://localhost:8090}"
 cookie_jar="$(mktemp)"
 signup_html="$(mktemp)"
 app_html="$(mktemp)"
-trap 'rm -f "$cookie_jar" "$signup_html" "$app_html"' EXIT
+check_email_html="$(mktemp)"
+members_html="$(mktemp)"
+invitation_html="$(mktemp)"
+member_cookie_jar="$(mktemp)"
+member_signup_html="$(mktemp)"
+trap 'rm -f "$cookie_jar" "$signup_html" "$app_html" "$check_email_html" "$members_html" "$invitation_html" "$member_cookie_jar" "$member_signup_html"' EXIT
 
 curl --fail --silent --show-error --cookie-jar "$cookie_jar" "$base_url/signup" > "$signup_html"
 csrf_token="$(sed -n 's/.*name="csrfToken" value="\([^"]*\)".*/\1/p' "$signup_html" | head -1)"
@@ -25,6 +30,16 @@ register_status="$(
     --data-urlencode "password=CI-secure-password-2026"
 )"
 test "$register_status" = "302"
+
+curl --fail --silent --show-error --cookie "$cookie_jar" "$base_url/check-email" > "$check_email_html"
+verification_path="$(sed -n 's/.*data-development-verification href="\([^"]*\)".*/\1/p' "$check_email_html" | head -1)"
+test -n "$verification_path"
+verify_status="$(
+  curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+    --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+    "$base_url$verification_path"
+)"
+test "$verify_status" = "200"
 
 curl --fail --silent --show-error --cookie "$cookie_jar" "$base_url/app" > "$app_html"
 grep --quiet "CI Workspace" "$app_html"
@@ -50,5 +65,60 @@ test "$create_status" = "302"
 
 curl --fail --silent --show-error --cookie "$cookie_jar" "$base_url/app" > "$app_html"
 grep --quiet "CI live card" "$app_html"
+
+curl --fail --silent --show-error --cookie "$cookie_jar" "$base_url/app/members" > "$members_html"
+invite_csrf_token="$(
+  sed -n '/action="\/app\/members\/invite"/,/<\/form>/ s/.*name="csrfToken" value="\([^"]*\)".*/\1/p' \
+    "$members_html" | head -1
+)"
+invite_email="member-${run_id}-${GITHUB_RUN_ATTEMPT:-1}@example.test"
+test -n "$invite_csrf_token"
+
+invite_status="$(
+  curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+    --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+    --request POST "$base_url/app/members/invite" \
+    --data-urlencode "csrfToken=$invite_csrf_token" \
+    --data-urlencode "email=$invite_email" \
+    --data-urlencode "role=member"
+)"
+test "$invite_status" = "302"
+
+curl --fail --silent --show-error --cookie "$cookie_jar" "$base_url/app/members" > "$members_html"
+invitation_path="$(sed -n 's/.*class="development-invite-link" href="\([^"]*\)".*/\1/p' "$members_html" | head -1)"
+test -n "$invitation_path"
+
+curl --fail --silent --show-error --cookie-jar "$member_cookie_jar" \
+  "$base_url$invitation_path" > "$invitation_html"
+member_signup_path="$(sed -n 's/.*href="\([^"]*\/signup?invitationToken=[^"]*\)".*/\1/p' "$invitation_html" | head -1)"
+test -n "$member_signup_path"
+
+curl --fail --silent --show-error --cookie "$member_cookie_jar" --cookie-jar "$member_cookie_jar" \
+  "$base_url$member_signup_path" > "$member_signup_html"
+member_csrf_token="$(sed -n 's/.*name="csrfToken" value="\([^"]*\)".*/\1/p' "$member_signup_html" | head -1)"
+invitation_token="$(sed -n 's/.*name="invitationToken" value="\([^"]*\)".*/\1/p' "$member_signup_html" | head -1)"
+test -n "$member_csrf_token"
+test -n "$invitation_token"
+
+member_register_status="$(
+  curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+    --cookie "$member_cookie_jar" --cookie-jar "$member_cookie_jar" \
+    --request POST "$base_url/auth/register" \
+    --data-urlencode "csrfToken=$member_csrf_token" \
+    --data-urlencode "invitationToken=$invitation_token" \
+    --data-urlencode "displayName=CI Member" \
+    --data-urlencode "email=$invite_email" \
+    --data-urlencode "password=CI-member-password-2026"
+)"
+test "$member_register_status" = "302"
+
+curl --fail --silent --show-error --cookie "$member_cookie_jar" "$base_url/check-email" > "$check_email_html"
+member_verification_path="$(sed -n 's/.*data-development-verification href="\([^"]*\)".*/\1/p' "$check_email_html" | head -1)"
+test -n "$member_verification_path"
+curl --fail --silent --show-error --cookie "$member_cookie_jar" --cookie-jar "$member_cookie_jar" \
+  "$base_url$member_verification_path" > /dev/null
+curl --fail --silent --show-error --cookie "$member_cookie_jar" "$base_url/app" > "$app_html"
+grep --quiet "CI Workspace" "$app_html"
+grep --quiet "member" "$app_html"
 
 echo "Functional smoke test passed"

@@ -13,6 +13,13 @@ services:
       DB_NAME: ${DB_NAME:-tabor_lane}
       DB_USER: ${DB_USER:-tabor_lane}
       DB_PASSWORD: ${DB_PASSWORD:-tabor_lane_local}
+      DB_SSL_MODE: disable
+      APP_BASE_URL: ${APP_BASE_URL:-http://localhost:8090}
+      BREVO_API_KEY: ${BREVO_API_KEY:-}
+      BREVO_SENDER_EMAIL: ${BREVO_SENDER_EMAIL:-notifications@taborlane.local}
+      BREVO_SENDER_NAME: ${BREVO_SENDER_NAME:-Tabor Lane}
+      UPSTASH_REDIS_REST_URL: ${UPSTASH_REDIS_REST_URL:-}
+      UPSTASH_REDIS_REST_TOKEN: ${UPSTASH_REDIS_REST_TOKEN:-}
       STORAGE_ENDPOINT: http://minio:9000
       STORAGE_REGION: auto
       STORAGE_ACCESS_KEY: ${MINIO_ROOT_USER:-tabor_lane}
@@ -21,8 +28,8 @@ services:
     ports:
       - "${APP_PORT:-8090}:8080"
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       minio:
         condition: service_healthy
       minio-init:
@@ -40,14 +47,31 @@ services:
     ports:
       - "${DB_PORT:-5433}:5432"
     volumes:
-      - postgres-data:/var/lib/postgresql/data
-      - ./scripts/postgres/init:/docker-entrypoint-initdb.d:ro
+      - postgres-app-data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 15
     restart: unless-stopped
+    networks:
+      - tabor-lane
+
+  migrate:
+    image: flyway/flyway:11-alpine
+    command:
+      - -url=jdbc:postgresql://postgres:5432/${DB_NAME:-tabor_lane}
+      - -user=${DB_USER:-tabor_lane}
+      - -password=${DB_PASSWORD:-tabor_lane_local}
+      - -baselineOnMigrate=true
+      - -baselineVersion=1
+      - -connectRetries=15
+      - migrate
+    volumes:
+      - ./scripts/postgres/migrations:/flyway/sql:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
     networks:
       - tabor-lane
 
@@ -91,7 +115,7 @@ services:
       - tabor-lane
 
 volumes:
-  postgres-data:
+  postgres-app-data:
   minio-data:
 
 networks:

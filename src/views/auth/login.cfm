@@ -19,12 +19,14 @@
 
         <form class="auth-form" method="post" action="/auth/login">
             <input type="hidden" name="csrfToken" value="#encodeForHTMLAttribute( prc.csrfToken )#">
+            <input type="hidden" name="invitationToken" value="#encodeForHTMLAttribute( prc.formData.invitationToken )#">
             <label>#$r( "auth.email" )#
                 <input name="email" type="email" autocomplete="email" value="#encodeForHTMLAttribute( prc.formData.email )#" placeholder="you@company.com" required maxlength="320" autofocus>
             </label>
             <label>#$r( "auth.password" )#
                 <input name="password" type="password" autocomplete="current-password" required>
             </label>
+            <a class="auth-helper-link" href="/forgot-password">#$r( "auth.forgot.link" )#</a>
             <button class="button button-primary" type="submit">#$r( "auth.login.submit" )# <svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##arrow-right"></use></svg></button>
         </form>
         <p class="auth-switch">#$r( "auth.login.noAccount" )# <a href="/signup">#$r( "auth.login.create" )#</a></p>

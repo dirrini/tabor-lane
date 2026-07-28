@@ -18,13 +18,14 @@ component extends="coldbox.system.Bootstrap" {
     variables.dbName = variables.environment.DB_NAME ?: "tabor_lane";
     variables.dbUser = variables.environment.DB_USER ?: "tabor_lane";
     variables.dbPassword = variables.environment.DB_PASSWORD ?: "tabor_lane_local";
+    variables.dbSslMode = variables.environment.DB_SSL_MODE ?: "disable";
 
     this.datasource = "taborLane";
     this.datasources = {
         "taborLane" = {
             class = "org.postgresql.Driver",
             bundleName = "org.postgresql.jdbc",
-            connectionString = "jdbc:postgresql://#variables.dbHost#:#variables.dbPort#/#variables.dbName#",
+            connectionString = "jdbc:postgresql://#variables.dbHost#:#variables.dbPort#/#variables.dbName#?sslmode=#variables.dbSslMode#",
             username = variables.dbUser,
             password = variables.dbPassword,
             connectionLimit = 20,

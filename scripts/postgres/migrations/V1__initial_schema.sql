@@ -121,6 +121,3 @@ CREATE TABLE outbox_event (
 CREATE INDEX outbox_pending_idx ON outbox_event(created_at)
     WHERE processed_at IS NULL;
 
-INSERT INTO workspace (name, slug, plan)
-VALUES ('Tabor Lane Demo', 'tabor-lane-demo', 'premium');
-

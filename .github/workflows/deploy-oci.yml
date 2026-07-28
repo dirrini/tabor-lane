@@ -86,8 +86,12 @@ jobs:
           OCI_APP_PATH: ${{ secrets.OCI_APP_PATH }}
         run: |
           ssh -i ~/.ssh/oci "$OCI_USER@$OCI_HOST" "mkdir -p '$OCI_APP_PATH'"
+          ssh -i ~/.ssh/oci "$OCI_USER@$OCI_HOST" \
+            "mkdir -p '$OCI_APP_PATH/scripts/postgres/migrations'"
           scp -i ~/.ssh/oci compose.production.yaml \
             "$OCI_USER@$OCI_HOST:$OCI_APP_PATH/compose.production.yaml"
+          scp -i ~/.ssh/oci scripts/postgres/migrations/*.sql \
+            "$OCI_USER@$OCI_HOST:$OCI_APP_PATH/scripts/postgres/migrations/"
 
       - name: Deploy and verify
         env:
@@ -100,4 +104,3 @@ jobs:
             "cd '$OCI_APP_PATH' && APP_IMAGE='$APP_IMAGE' docker compose --env-file .env.production -f compose.production.yaml pull && APP_IMAGE='$APP_IMAGE' docker compose --env-file .env.production -f compose.production.yaml up -d --wait"
           curl --fail --retry 12 --retry-delay 5 \
             "https://${OCI_HOST}/health/ready"
-

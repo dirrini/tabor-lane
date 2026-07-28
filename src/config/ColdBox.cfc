@@ -25,6 +25,10 @@ component {
             defaultLayout = "Main.cfm"
         };
 
+        variables.interceptors = [
+            { class = "interceptors.I18nBootstrap" }
+        ];
+
         variables.moduleSettings = {
             cbi18n = {
                 defaultResourceBundle = "includes/i18n/main",

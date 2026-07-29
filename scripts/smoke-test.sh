@@ -119,8 +119,21 @@ test "$password_update_status" = "302"
 
 csrf_token="$(sed -n 's/.*data-csrf-token="\([^"]*\)".*/\1/p' "$app_html" | head -1)"
 column_id="$(grep -o 'data-column-id="[^"]*"' "$app_html" | head -1 | cut -d'"' -f2)"
+target_column_id="$(grep -o 'data-column-id="[^"]*"' "$app_html" | sed -n '2p' | cut -d'"' -f2)"
+card_id="$(grep -o 'data-card-id="[^"]*"' "$app_html" | head -1 | cut -d'"' -f2)"
 test -n "$csrf_token"
 test -n "$column_id"
+test -n "$target_column_id"
+test -n "$card_id"
+
+move_response="$(
+  curl --fail --silent --show-error \
+    --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+    --request POST "$base_url/app/cards/$card_id/move" \
+    --data-urlencode "csrfToken=$csrf_token" \
+    --data-urlencode "columnId=$target_column_id"
+)"
+printf '%s' "$move_response" | grep --quiet '"success":true'
 
 create_status="$(
   curl --silent --show-error --output /dev/null --write-out '%{http_code}' \

@@ -183,7 +183,8 @@
             body: payload,
           });
           const result = await response.json();
-          if (!response.ok || !result.success) throw new Error("Move rejected");
+          const moveSucceeded = result.success ?? result.SUCCESS;
+          if (!response.ok || !moveSucceeded) throw new Error("Move rejected");
           showToast(workspace.dataset.moveSuccess);
         } catch (error) {
           previousList.appendChild(card);

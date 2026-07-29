@@ -96,7 +96,10 @@ component {
 
     function moveCard( event, rc, prc ) {
         if ( !csrfVerifyToken( rc.csrfToken ?: "", "card-write" ) ) {
-            event.renderData( type = "json", data = { success = false, code = "csrf" }, statusCode = 403 );
+            var csrfResponse = structNew( "ordered" );
+            csrfResponse[ "success" ] = false;
+            csrfResponse[ "code" ] = "csrf";
+            event.renderData( type = "json", data = csrfResponse, statusCode = 403 );
             return;
         }
         var result = boardService.moveCard(
@@ -105,9 +108,14 @@ component {
             cardId = rc.cardId ?: "",
             columnId = rc.columnId ?: ""
         );
+        var responseData = structNew( "ordered" );
+        responseData[ "success" ] = result.success;
+        if ( structKeyExists( result, "code" ) ) {
+            responseData[ "code" ] = result.code;
+        }
         event.renderData(
             type = "json",
-            data = result,
+            data = responseData,
             statusCode = result.success ? 200 : 403
         );
     }

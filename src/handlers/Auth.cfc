@@ -63,6 +63,7 @@ component {
         if ( prc.formData.invitationToken.len() ) {
             prc.invitation = workspaceService.inspectInvitation( prc.formData.invitationToken );
             if ( prc.invitation.found ) {
+                prc.formData.displayName = prc.invitation.inviteeName;
                 prc.formData.email = prc.invitation.email;
                 prc.formData.workspaceName = prc.invitation.workspaceName;
             }

@@ -207,6 +207,7 @@
   "members.role.viewer": "Viewer",
   "members.invite.title": "Invite a teammate",
   "members.invite.body": "They will receive a secure invitation by email.",
+  "members.invite.namePlaceholder": "Teammate's full name",
   "members.invite.submit": "Send invitation",
   "members.invited": "Invitation sent successfully.",
   "members.pending": "Pending invitations",

@@ -30,6 +30,7 @@
                     <div class="panel-heading"><div><h2>#$r( "members.invite.title" )#</h2><p>#$r( "members.invite.body" )#</p></div></div>
                     <form class="auth-form" method="post" action="/app/members/invite">
                         <input type="hidden" name="csrfToken" value="#encodeForHTMLAttribute( prc.inviteCsrfToken )#">
+                        <label>#$r( "auth.name" )#<input name="inviteeName" type="text" required maxlength="160" autocomplete="off" placeholder="#encodeForHTMLAttribute( $r( 'members.invite.namePlaceholder' ) )#"></label>
                         <label>#$r( "auth.email" )#<input name="email" type="email" required placeholder="teammate@company.com"></label>
                         <label>#$r( "members.role" )#
                             <select name="role"><option value="member">#$r( "members.role.member" )#</option><option value="admin">#$r( "members.role.admin" )#</option><option value="viewer">#$r( "members.role.viewer" )#</option></select>
@@ -44,7 +45,7 @@
             <section class="members-panel pending-panel">
                 <div class="panel-heading"><div><h2>#$r( "members.pending" )#</h2></div><span>#prc.invitations.len()#</span></div>
                 <cfloop array="#prc.invitations#" item="invitation">
-                    <div class="pending-row"><span>#encodeForHTML( invitation.email )#</span><small>#encodeForHTML( $r( "workspace.role.#invitation.role#", invitation.role ) )#</small></div>
+                    <div class="pending-row"><div><strong>#encodeForHTML( invitation.invitee_name ?: invitation.email )#</strong><span>#encodeForHTML( invitation.email )#</span></div><small>#encodeForHTML( $r( "workspace.role.#invitation.role#", invitation.role ) )#</small></div>
                 </cfloop>
             </section>
         </cfif>

@@ -207,6 +207,7 @@
   "members.role.viewer": "Visualizador",
   "members.invite.title": "Convide alguém",
   "members.invite.body": "A pessoa receberá um convite seguro por e-mail.",
+  "members.invite.namePlaceholder": "Nome completo da pessoa",
   "members.invite.submit": "Enviar convite",
   "members.invited": "Convite enviado com sucesso.",
   "members.pending": "Convites pendentes",

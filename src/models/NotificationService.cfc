@@ -52,6 +52,7 @@ component singleton {
 		var portuguese = arguments.invitation.locale == "pt_BR";
 		return brevoEmailProvider.send(
 			recipientEmail = arguments.invitation.email,
+			recipientName = arguments.invitation.inviteeName,
 			subject = portuguese ? "Convite para o Tabor Lane" : "Your Tabor Lane invitation",
 			htmlContent = emailHtml(
 				portuguese ? "Você foi convidado" : "You've been invited",

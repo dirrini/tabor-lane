@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+trap 'status=$?; echo "Functional smoke test failed near line ${LINENO}" >&2; exit "$status"' ERR
 
 base_url="${APP_BASE_URL:-http://localhost:8090}"
 cookie_jar="$(mktemp)"
@@ -163,12 +164,14 @@ invite_status="$(
     --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
     --request POST "$base_url/app/members/invite" \
     --data-urlencode "csrfToken=$invite_csrf_token" \
+    --data-urlencode "inviteeName=CI Invited Member" \
     --data-urlencode "email=$invite_email" \
     --data-urlencode "role=member"
 )"
 test "$invite_status" = "302"
 
 curl --fail --silent --show-error --cookie "$cookie_jar" "$base_url/app/members" > "$members_html"
+grep --quiet "CI Invited Member" "$members_html"
 invitation_path="$(sed -n 's/.*class="development-invite-link" href="\([^"]*\)".*/\1/p' "$members_html" | head -1)"
 test -n "$invitation_path"
 
@@ -183,6 +186,11 @@ member_csrf_token="$(sed -n 's/.*name="csrfToken" value="\([^"]*\)".*/\1/p' "$me
 invitation_token="$(sed -n 's/.*name="invitationToken" value="\([^"]*\)".*/\1/p' "$member_signup_html" | head -1)"
 test -n "$member_csrf_token"
 test -n "$invitation_token"
+if ! grep 'name="displayName"' "$member_signup_html" | grep --quiet 'value="CI&#x20;Invited&#x20;Member"'; then
+  echo "Invited member name was not prefilled on signup" >&2
+  grep 'name="displayName"' "$member_signup_html" >&2 || true
+  exit 1
+fi
 
 member_register_status="$(
   curl --silent --show-error --output /dev/null --write-out '%{http_code}' \

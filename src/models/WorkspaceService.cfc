@@ -20,7 +20,7 @@ component singleton {
 	array function getPendingInvitations( required string userId, required string workspaceId ){
 		assertMember( arguments.userId, arguments.workspaceId );
 		return queryExecute(
-			"SELECT CAST(id AS TEXT) AS id, email, role, expires_at, created_at
+			"SELECT CAST(id AS TEXT) AS id, invitee_name, email, role, expires_at, created_at
 			 FROM workspace_invitation
 			 WHERE workspace_id = CAST(:workspaceId AS UUID)
 			   AND accepted_at IS NULL
@@ -34,6 +34,7 @@ component singleton {
 	struct function createInvitation(
 		required string userId,
 		required string workspaceId,
+		required string inviteeName,
 		required string email,
 		string role = "member",
 		string locale = "en_US"
@@ -53,6 +54,10 @@ component singleton {
 		}
 		if ( !listFindNoCase( "admin,member,viewer", arguments.role ) ) {
 			return { success = false, code = "invalid_role" };
+		}
+		var normalizedName = trim( arguments.inviteeName );
+		if ( !normalizedName.len() || normalizedName.len() > 160 ) {
+			return { success = false, code = "invalid_name" };
 		}
 
 		var normalizedEmail = lCase( trim( arguments.email ) );
@@ -78,12 +83,13 @@ component singleton {
 			);
 			queryExecute(
 				"INSERT INTO workspace_invitation
-				    (workspace_id, email, role, token_hash, invited_by, expires_at)
+				    (workspace_id, invitee_name, email, role, token_hash, invited_by, expires_at)
 				 VALUES
-				    (CAST(:workspaceId AS UUID), :email, :role, :tokenHash,
+				    (CAST(:workspaceId AS UUID), :inviteeName, :email, :role, :tokenHash,
 				     CAST(:userId AS UUID), :expiresAt)",
 				{
 					workspaceId = arguments.workspaceId,
+					inviteeName = normalizedName,
 					email = normalizedEmail,
 					role = arguments.role,
 					tokenHash = tokenService.hashToken( token ),
@@ -98,6 +104,7 @@ component singleton {
 		return {
 			success = true,
 			token = token,
+			inviteeName = normalizedName,
 			email = normalizedEmail,
 			role = arguments.role,
 			workspaceName = access[ 1 ].workspace_name,
@@ -108,7 +115,7 @@ component singleton {
 
 	struct function inspectInvitation( required string token ){
 		var rows = queryExecute(
-			"SELECT i.email, i.role, CAST(i.workspace_id AS TEXT) AS workspace_id,
+			"SELECT i.invitee_name, i.email, i.role, CAST(i.workspace_id AS TEXT) AS workspace_id,
 			        w.name AS workspace_name, u.display_name AS inviter_name
 			 FROM workspace_invitation i
 			 JOIN workspace w ON w.id = i.workspace_id
@@ -122,6 +129,7 @@ component singleton {
 		return rows.len()
 			? {
 				found = true,
+				inviteeName = rows[ 1 ].invitee_name ?: "",
 				email = rows[ 1 ].email,
 				role = rows[ 1 ].role,
 				workspaceId = rows[ 1 ].workspace_id,

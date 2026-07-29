@@ -45,6 +45,7 @@ component {
     function inviteMember( event, rc, prc ) {
         if (
             !csrfVerifyToken( rc.csrfToken ?: "", "invite-member" )
+            || !trim( rc.inviteeName ?: "" ).len()
             || !isValid( "email", trim( rc.email ?: "" ) )
         ) {
             relocate( uri = "/app/members?error=invalid" );
@@ -55,6 +56,7 @@ component {
         var result = workspaceService.createInvitation(
             userId = prc.auth.id,
             workspaceId = prc.auth.workspaceId,
+            inviteeName = rc.inviteeName,
             email = rc.email,
             role = rc.role ?: "member",
             locale = getFWLocale()

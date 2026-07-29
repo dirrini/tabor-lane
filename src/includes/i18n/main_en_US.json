@@ -269,5 +269,8 @@
   "profile.error.password": "The new password must have at least 10 characters.",
   "profile.error.current_password": "The current password is incorrect.",
   "profile.error.password_match": "The new password confirmation does not match.",
-  "profile.error.rate": "Too many password attempts. Please try again later."
+  "profile.error.rate": "Too many password attempts. Please try again later.",
+  "profile.subscription.eyebrow": "Subscription",
+  "profile.subscription.manage": "Manage your Premium plan",
+  "profile.subscription.stripe": "Tabor Lane does not store sensitive payment data. Checkout and subscription management are securely handled by Stripe."
 }

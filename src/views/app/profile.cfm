@@ -1,5 +1,5 @@
 <cfoutput>
-<main class="workspace-shell">
+<main class="workspace-shell"<cfif prc.checkoutNotice == "success" && prc.billing.plan != "premium"> data-billing-pending data-billing-status-url="/app/billing/status" data-billing-refresh-url="/app/profile"</cfif>>
     <aside class="workspace-sidebar">
         <a class="brand" href="/"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><span class="brand-name">Tabor<span>Lane</span></span></a>
         <div class="workspace-picker">
@@ -27,22 +27,46 @@
         </header>
 
         <cfif prc.notice.len()><div class="form-success">#$r( prc.notice == "1" && structKeyExists( rc, "passwordChanged" ) ? "profile.password.success" : "profile.saved" )#</div></cfif>
+        <cfif prc.checkoutNotice == "success"><div class="form-success">#$r( "billing.checkout.success" )#</div></cfif>
+        <cfif prc.checkoutNotice == "cancelled"><div class="billing-notice">#$r( "billing.checkout.cancelled" )#</div></cfif>
         <cfif prc.error.len()><div class="form-errors"><svg class="icon"><use href="/resources/icons.svg##alert"></use></svg><p>#$r( "profile.error.#prc.error#", $r( "profile.error.generic" ) )#</p></div></cfif>
 
-        <section class="profile-plan-card #prc.billing.plan == 'premium' ? 'premium' : ''#">
-            <div class="profile-plan-icon"><svg class="icon"><cfif prc.billing.plan == "premium"><use href="/resources/icons.svg##crown"></use><cfelse><use href="/resources/icons.svg##board"></use></cfif></svg></div>
-            <div>
-                <small>#$r( "profile.workspacePlan" )#</small>
-                <h2>#encodeForHTML( prc.account.workspace_name )#</h2>
-                <strong>#prc.billing.plan == "premium" ? $r( "pricing.premium.name" ) : $r( "pricing.free.name" )#</strong>
+        <div class="profile-overview">
+            <section class="profile-plan-card #prc.billing.plan == 'premium' ? 'premium' : ''#">
+                <div class="profile-plan-icon"><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##building"></use></svg></div>
+                <div>
+                    <small>#$r( "profile.workspacePlan" )#</small>
+                    <h2>#encodeForHTML( prc.account.workspace_name )#</h2>
+                    <strong>#prc.billing.plan == "premium" ? $r( "pricing.premium.name" ) : $r( "pricing.free.name" )#</strong>
+                    <cfif prc.billing.plan == "premium">
+                        <p>#$r( "profile.validUntil" )#: <b>#isDate( prc.billing.currentPeriodEnd ) ? dateFormat( prc.billing.currentPeriodEnd, "medium" ) : $r( "profile.pendingDate" )#</b></p>
+                    <cfelse>
+                        <p>#$r( "billing.free.body" )#</p>
+                    </cfif>
+                </div>
+            </section>
+
+            <section class="profile-subscription-card">
+                <div class="profile-subscription-heading">
+                    <div><small>#$r( "profile.subscription.eyebrow" )#</small><h2>#$r( prc.billing.plan == "premium" ? "profile.subscription.manage" : "billing.upgrade.title" )#</h2></div>
+                    <cfif prc.billing.plan == "premium"><svg class="icon profile-crown"><use href="/resources/icons.svg##crown"></use></svg></cfif>
+                </div>
                 <cfif prc.billing.plan == "premium">
-                    <p>#$r( "profile.validUntil" )#: <b>#isDate( prc.billing.currentPeriodEnd ) ? dateFormat( prc.billing.currentPeriodEnd, "medium" ) : $r( "profile.pendingDate" )#</b></p>
+                    <p class="profile-subscription-copy">#$r( "billing.premium.body" )#</p>
+                    <cfif prc.billing.canManage><form method="post" action="/app/billing/portal"><input type="hidden" name="csrfToken" value="#encodeForHTMLAttribute( prc.billingCsrfToken )#"><button class="button button-dark" type="submit"><svg class="icon"><use href="/resources/icons.svg##external"></use></svg> #$r( "billing.portal" )#</button></form></cfif>
+                <cfelseif prc.billing.canManage && prc.billing.configured>
+                    <div class="profile-billing-options">
+                        <form method="post" action="/app/billing/checkout"><input type="hidden" name="csrfToken" value="#encodeForHTMLAttribute( prc.billingCsrfToken )#"><input type="hidden" name="interval" value="monthly"><button class="billing-option" type="submit"><span><strong>#$r( "billing.monthly.title" )#</strong><small>#$r( "billing.monthly.body" )#</small></span><svg class="icon"><use href="/resources/icons.svg##arrow-right"></use></svg></button></form>
+                        <form method="post" action="/app/billing/checkout"><input type="hidden" name="csrfToken" value="#encodeForHTMLAttribute( prc.billingCsrfToken )#"><input type="hidden" name="interval" value="yearly"><button class="billing-option recommended" type="submit"><span><strong>#$r( "billing.yearly.title" )#</strong><small>#$r( "billing.yearly.body" )#</small></span><svg class="icon"><use href="/resources/icons.svg##arrow-right"></use></svg></button></form>
+                    </div>
+                <cfelseif !prc.billing.canManage>
+                    <div class="billing-notice">#$r( "billing.ownerOnly" )#</div>
                 <cfelse>
-                    <p>#$r( "billing.free.body" )#</p>
+                    <div class="billing-notice">#$r( "billing.notConfigured" )#</div>
                 </cfif>
-            </div>
-            <a class="button #prc.billing.plan == 'premium' ? 'button-dark' : 'button-primary'#" href="/app/billing">#prc.billing.plan == "premium" ? $r( "billing.portal" ) : $r( "profile.upgrade" )#</a>
-        </section>
+                <p class="stripe-safety"><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##shield-check"></use></svg><span>#$r( "profile.subscription.stripe" )#</span></p>
+            </section>
+        </div>
 
         <div class="profile-grid">
             <section class="members-panel profile-panel">

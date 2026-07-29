@@ -47,7 +47,9 @@
         if (response.ok) {
           const billing = await response.json();
           if (billing.plan === "premium") {
-            window.location.replace("/app/billing");
+            window.location.replace(
+              pendingBilling.dataset.billingRefreshUrl || window.location.pathname
+            );
             return;
           }
         }

@@ -76,8 +76,8 @@ component singleton {
 			"metadata[billing_interval]" = arguments.interval,
 			"subscription_data[metadata][workspace_id]" = arguments.workspaceId,
 			"subscription_data[metadata][billing_interval]" = arguments.interval,
-			"success_url" = "#variables.baseUrl#/app/billing?checkout=success",
-			"cancel_url" = "#variables.baseUrl#/app/billing?checkout=cancelled",
+			"success_url" = "#variables.baseUrl#/app/profile?checkout=success",
+			"cancel_url" = "#variables.baseUrl#/app/profile?checkout=cancelled",
 			"allow_promotion_codes" = "true"
 		};
 		if ( billing.customerId.len() ) {

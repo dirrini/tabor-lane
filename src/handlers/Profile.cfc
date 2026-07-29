@@ -27,7 +27,9 @@ component {
         prc.billing = stripeBillingService.getBilling( prc.auth.id, prc.auth.workspaceId );
         prc.profileCsrfToken = csrfGenerateToken( "profile" );
         prc.passwordCsrfToken = csrfGenerateToken( "profile-password" );
+        prc.billingCsrfToken = csrfGenerateToken( "billing" );
         prc.logoutCsrfToken = csrfGenerateToken( "logout" );
+        prc.checkoutNotice = rc.checkout ?: "";
         prc.notice = rc.updated ?: rc.passwordChanged ?: "";
         prc.error = rc.error ?: "";
         event.setView( "app/profile" );

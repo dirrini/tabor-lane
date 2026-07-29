@@ -36,7 +36,7 @@
                             <span class="column-dot dot-#columnIndex == 1 ? 'sand' : columnIndex == 2 ? 'blue' : columnIndex == 3 ? 'amber' : 'green'#"></span>
                             <strong>#encodeForHTML( column.name )#</strong>
                             <b data-card-count>#column.cards.len()#</b>
-                            <cfif !isNull( column.wip_limit )><em>WIP #column.cards.len()# / #column.wip_limit#</em></cfif>
+                            <cfif !isNull( column.wip_limit )><em>WIP <span data-wip-count>#column.cards.len()#</span> / #column.wip_limit#</em></cfif>
                         </header>
                         <div class="live-card-list" data-card-list>
                             <cfloop array="#column.cards#" item="card">

@@ -137,8 +137,10 @@
       workspace.querySelectorAll("[data-column-id]").forEach((column) => {
         const count = column.querySelectorAll("[data-card-id]").length;
         const counter = column.querySelector("[data-card-count]");
+        const wipCounter = column.querySelector("[data-wip-count]");
         const empty = column.querySelector("[data-column-empty]");
         if (counter) counter.textContent = String(count);
+        if (wipCounter) wipCounter.textContent = String(count);
         if (empty) empty.hidden = count > 0;
       });
     };

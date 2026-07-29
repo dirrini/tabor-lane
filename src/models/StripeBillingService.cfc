@@ -6,6 +6,7 @@ component singleton {
 	variables.monthlyPriceId = variables.environment.STRIPE_PRICE_PREMIUM_MONTHLY ?: "";
 	variables.yearlyPriceId = variables.environment.STRIPE_PRICE_PREMIUM_YEARLY ?: "";
 	variables.baseUrl = reReplace( variables.environment.APP_BASE_URL ?: "http://localhost:8090", "/$", "" );
+	variables.priceCache = {};
 
 	boolean function isConfigured(){
 		return variables.secretKey.len() > 0
@@ -17,7 +18,9 @@ component singleton {
 		var rows = queryExecute(
 			"SELECT w.plan, wm.role, wb.stripe_customer_id, wb.stripe_subscription_id,
 			        COALESCE(wb.subscription_status, 'none') AS subscription_status,
-			        wb.billing_interval, wb.current_period_end, wb.cancel_at_period_end
+			        wb.billing_interval, wb.current_period_end, wb.cancel_at_period_end,
+			        (SELECT COUNT(*) FROM workspace_member members
+			         WHERE members.workspace_id = w.id) AS member_count
 			 FROM workspace_member wm
 			 JOIN workspace w ON w.id = wm.workspace_id
 			 LEFT JOIN workspace_billing wb ON wb.workspace_id = w.id
@@ -39,9 +42,44 @@ component singleton {
 			interval = rows[ 1 ].billing_interval ?: "",
 			currentPeriodEnd = rows[ 1 ].current_period_end ?: "",
 			cancelAtPeriodEnd = rows[ 1 ].cancel_at_period_end ?: false,
+			memberCount = val( rows[ 1 ].member_count ),
 			canManage = rows[ 1 ].role == "owner",
 			configured = isConfigured()
 		};
+	}
+
+	struct function getPricing( required string locale, numeric quantity = 1 ){
+		var result = {
+			configured = false,
+			monthly = { display = "" },
+			yearly = { display = "" }
+		};
+		if ( !isConfigured() ) {
+			return result;
+		}
+		if ( !structKeyExists( variables.priceCache, "monthly" ) ) {
+			variables.priceCache.monthly = retrievePrice( variables.monthlyPriceId );
+		}
+		if ( !structKeyExists( variables.priceCache, "yearly" ) ) {
+			variables.priceCache.yearly = retrievePrice( variables.yearlyPriceId );
+		}
+		if ( !variables.priceCache.monthly.success || !variables.priceCache.yearly.success ) {
+			structClear( variables.priceCache );
+			return result;
+		}
+		var safeQuantity = max( 1, val( arguments.quantity ) );
+		result.configured = true;
+		result.monthly = formatPrice(
+			variables.priceCache.monthly.data,
+			arguments.locale,
+			safeQuantity
+		);
+		result.yearly = formatPrice(
+			variables.priceCache.yearly.data,
+			arguments.locale,
+			safeQuantity
+		);
+		return result;
 	}
 
 	struct function reconcileBilling( required string userId, required string workspaceId ){
@@ -344,6 +382,33 @@ component singleton {
 			);
 			return { success = false };
 		}
+	}
+
+	private struct function retrievePrice( required string priceId ){
+		return stripeGet( "/v1/prices/#urlEncodedFormat( arguments.priceId )#" );
+	}
+
+	private struct function formatPrice(
+		required struct price,
+		required string locale,
+		required numeric quantity
+	){
+		var currencyCode = uCase( arguments.price.currency ?: "BRL" );
+		var currency = createObject( "java", "java.util.Currency" ).getInstance( currencyCode );
+		var fractionDigits = currency.getDefaultFractionDigits();
+		var divisor = createObject( "java", "java.lang.Math" ).pow( 10, max( 0, fractionDigits ) );
+		var total = val( arguments.price.unit_amount ?: 0 ) * arguments.quantity / divisor;
+		var javaLocale = createObject( "java", "java.util.Locale" ).forLanguageTag(
+			replace( arguments.locale, "_", "-", "all" )
+		);
+		var formatter = createObject( "java", "java.text.NumberFormat" ).getCurrencyInstance( javaLocale );
+		formatter.setCurrency( currency );
+		return {
+			display = formatter.format( javacast( "double", total ) ),
+			currency = currencyCode,
+			amount = total,
+			quantity = arguments.quantity
+		};
 	}
 
 	private struct function stripePost( required string path, required struct fields ){

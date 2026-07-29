@@ -45,7 +45,7 @@ test "$verify_status" = "200"
 
 curl --fail --silent --show-error --cookie "$cookie_jar" "$base_url/app" > "$app_html"
 grep --quiet "CI Workspace" "$app_html"
-grep --quiet "owner" "$app_html"
+grep --quiet "Owner" "$app_html"
 grep --quiet "data-column-id=" "$app_html"
 grep --quiet "data-card-id=" "$app_html"
 grep --quiet "data-workspace-menu-toggle" "$app_html"

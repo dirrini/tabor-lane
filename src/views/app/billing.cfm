@@ -18,7 +18,7 @@
         </nav>
         <a class="workspace-account active" href="/app/profile">
             <span class="workspace-avatar account-avatar">#encodeForHTML( left( prc.auth.displayName, 1 ) )#</span>
-            <div><strong>#encodeForHTML( prc.auth.displayName )#</strong><small>#encodeForHTML( prc.auth.role )# &middot; #encodeForHTML( prc.auth.email )#</small></div>
+            <div><strong>#encodeForHTML( prc.auth.displayName )#</strong><small>#encodeForHTML( $r( "workspace.role.#prc.auth.role#", prc.auth.role ) )# &middot; #encodeForHTML( prc.auth.email )#</small></div>
         </a>
         <form method="post" action="/auth/logout"><input type="hidden" name="csrfToken" value="#encodeForHTMLAttribute( prc.logoutCsrfToken )#"><button class="workspace-back" type="submit"><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##arrow-left"></use></svg> #$r( "app.logout" )#</button></form>
     </aside>
@@ -49,7 +49,7 @@
                 <dl>
                     <div><dt>#$r( "billing.status" )#</dt><dd>#encodeForHTML( prc.billing.status )#</dd></div>
                     <div><dt>#$r( "billing.interval" )#</dt><dd>#encodeForHTML( prc.billing.interval )#</dd></div>
-                    <cfif isDate( prc.billing.currentPeriodEnd )><div><dt>#$r( "billing.renews" )#</dt><dd>#dateFormat( prc.billing.currentPeriodEnd, "medium" )#</dd></div></cfif>
+                    <cfif isDate( prc.billing.currentPeriodEnd )><div><dt>#$r( "billing.renews" )#</dt><dd>#lsDateFormat( prc.billing.currentPeriodEnd, "long", prc.auth.locale ?: "en_US" )#</dd></div></cfif>
                 </dl>
                 <cfif prc.billing.canManage>
                     <form method="post" action="/app/billing/portal">
@@ -75,12 +75,12 @@
                         <form method="post" action="/app/billing/checkout">
                             <input type="hidden" name="csrfToken" value="#encodeForHTMLAttribute( prc.billingCsrfToken )#">
                             <input type="hidden" name="interval" value="monthly">
-                            <button class="billing-option" type="submit"><span><strong>#$r( "billing.monthly.title" )#</strong><small>#$r( "billing.monthly.body" )#</small></span><svg class="icon"><use href="/resources/icons.svg##arrow-right"></use></svg></button>
+                            <button class="billing-option" type="submit"><div class="billing-option-copy"><strong>#$r( "billing.monthly.title" )#</strong><cfif prc.pricing.monthly.display.len()><b>#encodeForHTML( prc.pricing.monthly.display )# <small>#$r( "billing.perMonth" )#</small></b></cfif><small>#$r( "billing.monthly.body" )#</small></div><svg class="icon"><use href="/resources/icons.svg##arrow-right"></use></svg></button>
                         </form>
                         <form method="post" action="/app/billing/checkout">
                             <input type="hidden" name="csrfToken" value="#encodeForHTMLAttribute( prc.billingCsrfToken )#">
                             <input type="hidden" name="interval" value="yearly">
-                            <button class="billing-option recommended" type="submit"><span><strong>#$r( "billing.yearly.title" )#</strong><small>#$r( "billing.yearly.body" )#</small></span><svg class="icon"><use href="/resources/icons.svg##arrow-right"></use></svg></button>
+                            <button class="billing-option" type="submit"><div class="billing-option-copy"><div class="billing-option-title"><strong>#$r( "billing.yearly.title" )#</strong><span class="best-value-chip"><svg class="icon"><use href="/resources/icons.svg##star"></use></svg>#$r( "billing.recommended" )#</span></div><cfif prc.pricing.yearly.display.len()><b>#encodeForHTML( prc.pricing.yearly.display )# <small>#$r( "billing.perYear" )#</small></b></cfif><small>#$r( "billing.yearly.body" )#</small></div><svg class="icon"><use href="/resources/icons.svg##arrow-right"></use></svg></button>
                         </form>
                     </div>
                 <cfelseif !prc.billing.canManage>

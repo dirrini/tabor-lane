@@ -22,7 +22,7 @@
         </nav>
         <a class="workspace-account" href="/app/profile">
             <span class="workspace-avatar account-avatar">#encodeForHTML( left( prc.auth.displayName, 1 ) )#</span>
-            <div><strong>#encodeForHTML( prc.auth.displayName )#</strong><small>#encodeForHTML( prc.auth.role )# · #encodeForHTML( prc.auth.email )#</small></div>
+            <div><strong>#encodeForHTML( prc.auth.displayName )#</strong><small>#encodeForHTML( $r( "workspace.role.#prc.auth.role#", prc.auth.role ) )# · #encodeForHTML( prc.auth.email )#</small></div>
         </a>
         <form method="post" action="/auth/logout">
             <input type="hidden" name="csrfToken" value="#encodeForHTMLAttribute( prc.logoutCsrfToken )#">

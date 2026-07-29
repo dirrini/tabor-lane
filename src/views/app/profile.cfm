@@ -18,7 +18,7 @@
         </nav>
         <a class="workspace-account active" href="/app/profile">
             <span class="workspace-avatar account-avatar">#encodeForHTML( left( prc.auth.displayName, 1 ) )#</span>
-            <div><strong>#encodeForHTML( prc.auth.displayName )#</strong><small>#encodeForHTML( prc.auth.role )# &middot; #encodeForHTML( prc.auth.email )#</small></div>
+            <div><strong>#encodeForHTML( prc.auth.displayName )#</strong><small>#encodeForHTML( $r( "workspace.role.#prc.auth.role#", prc.auth.role ) )# &middot; #encodeForHTML( prc.auth.email )#</small></div>
         </a>
         <form method="post" action="/auth/logout"><input type="hidden" name="csrfToken" value="#encodeForHTMLAttribute( prc.logoutCsrfToken )#"><button class="workspace-back" type="submit"><svg class="icon"><use href="/resources/icons.svg##arrow-left"></use></svg> #$r( "app.logout" )#</button></form>
     </aside>
@@ -42,7 +42,7 @@
                     <h2>#encodeForHTML( prc.account.workspace_name )#</h2>
                     <strong>#prc.billing.plan == "premium" ? $r( "pricing.premium.name" ) : $r( "pricing.free.name" )#</strong>
                     <cfif prc.billing.plan == "premium">
-                        <p>#$r( "profile.validUntil" )#: <b>#isDate( prc.billing.currentPeriodEnd ) ? dateFormat( prc.billing.currentPeriodEnd, "medium" ) : $r( "profile.pendingDate" )#</b></p>
+                        <p>#$r( "profile.validUntil" )#: <b>#isDate( prc.billing.currentPeriodEnd ) ? lsDateFormat( prc.billing.currentPeriodEnd, "long", prc.auth.locale ?: "en_US" ) : $r( "profile.pendingDate" )#</b></p>
                     <cfelse>
                         <p>#$r( "billing.free.body" )#</p>
                     </cfif>
@@ -59,8 +59,8 @@
                     <cfif prc.billing.canManage><form method="post" action="/app/billing/portal"><input type="hidden" name="csrfToken" value="#encodeForHTMLAttribute( prc.billingPortalCsrfToken )#"><button class="button button-dark" type="submit"><svg class="icon"><use href="/resources/icons.svg##external"></use></svg> #$r( "billing.portal" )#</button></form></cfif>
                 <cfelseif prc.billing.canManage && prc.billing.configured>
                     <div class="profile-billing-options">
-                        <form method="post" action="/app/billing/checkout"><input type="hidden" name="csrfToken" value="#encodeForHTMLAttribute( prc.billingCsrfToken )#"><input type="hidden" name="interval" value="monthly"><button class="billing-option" type="submit"><span><strong>#$r( "billing.monthly.title" )#</strong><small>#$r( "billing.monthly.body" )#</small></span><svg class="icon"><use href="/resources/icons.svg##arrow-right"></use></svg></button></form>
-                        <form method="post" action="/app/billing/checkout"><input type="hidden" name="csrfToken" value="#encodeForHTMLAttribute( prc.billingCsrfToken )#"><input type="hidden" name="interval" value="yearly"><button class="billing-option recommended" type="submit"><span><strong>#$r( "billing.yearly.title" )#</strong><small>#$r( "billing.yearly.body" )#</small></span><svg class="icon"><use href="/resources/icons.svg##arrow-right"></use></svg></button></form>
+                        <form method="post" action="/app/billing/checkout"><input type="hidden" name="csrfToken" value="#encodeForHTMLAttribute( prc.billingCsrfToken )#"><input type="hidden" name="interval" value="monthly"><button class="billing-option" type="submit"><div class="billing-option-copy"><strong>#$r( "billing.monthly.title" )#</strong><cfif prc.pricing.monthly.display.len()><b>#encodeForHTML( prc.pricing.monthly.display )# <small>#$r( "billing.perMonth" )#</small></b></cfif><small>#$r( "billing.monthly.body" )#</small></div><svg class="icon"><use href="/resources/icons.svg##arrow-right"></use></svg></button></form>
+                        <form method="post" action="/app/billing/checkout"><input type="hidden" name="csrfToken" value="#encodeForHTMLAttribute( prc.billingCsrfToken )#"><input type="hidden" name="interval" value="yearly"><button class="billing-option" type="submit"><div class="billing-option-copy"><div class="billing-option-title"><strong>#$r( "billing.yearly.title" )#</strong><span class="best-value-chip"><svg class="icon"><use href="/resources/icons.svg##star"></use></svg>#$r( "billing.recommended" )#</span></div><cfif prc.pricing.yearly.display.len()><b>#encodeForHTML( prc.pricing.yearly.display )# <small>#$r( "billing.perYear" )#</small></b></cfif><small>#$r( "billing.yearly.body" )#</small></div><svg class="icon"><use href="/resources/icons.svg##arrow-right"></use></svg></button></form>
                     </div>
                 <cfelseif !prc.billing.canManage>
                     <div class="billing-notice">#$r( "billing.ownerOnly" )#</div>
@@ -101,9 +101,9 @@
                 <div><dt>#$r( "profile.details.accountId" )#</dt><dd>#encodeForHTML( prc.account.id )#</dd></div>
                 <div><dt>#$r( "profile.details.workspaceId" )#</dt><dd>#encodeForHTML( prc.account.workspace_id )#</dd></div>
                 <div><dt>#$r( "profile.details.slug" )#</dt><dd>#encodeForHTML( prc.account.workspace_slug )#</dd></div>
-                <div><dt>#$r( "profile.details.role" )#</dt><dd>#encodeForHTML( prc.account.role )#</dd></div>
-                <div><dt>#$r( "profile.details.memberSince" )#</dt><dd>#dateFormat( prc.account.member_since, "medium" )#</dd></div>
-                <div><dt>#$r( "profile.details.accountCreated" )#</dt><dd>#dateFormat( prc.account.created_at, "medium" )#</dd></div>
+                <div><dt>#$r( "profile.details.role" )#</dt><dd>#encodeForHTML( $r( "workspace.role.#prc.account.role#", prc.account.role ) )#</dd></div>
+                <div><dt>#$r( "profile.details.memberSince" )#</dt><dd>#lsDateFormat( prc.account.member_since, "long", prc.auth.locale ?: "en_US" )#</dd></div>
+                <div><dt>#$r( "profile.details.accountCreated" )#</dt><dd>#lsDateFormat( prc.account.created_at, "long", prc.auth.locale ?: "en_US" )#</dd></div>
             </dl>
         </section>
     </section>

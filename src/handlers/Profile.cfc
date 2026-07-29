@@ -33,6 +33,10 @@ component {
             stripeBillingService.reconcileBilling( prc.auth.id, prc.auth.workspaceId );
             prc.billing = stripeBillingService.getBilling( prc.auth.id, prc.auth.workspaceId );
         }
+        prc.pricing = stripeBillingService.getPricing(
+            prc.auth.locale ?: "en_US",
+            prc.billing.memberCount ?: 1
+        );
         prc.profileCsrfToken = csrfGenerateToken( "profile" );
         prc.passwordCsrfToken = csrfGenerateToken( "profile-password" );
         prc.billingCsrfToken = csrfGenerateToken( "billing" );

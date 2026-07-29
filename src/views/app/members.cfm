@@ -18,7 +18,7 @@
         </nav>
         <a class="workspace-account" href="/app/profile">
             <span class="workspace-avatar account-avatar">#encodeForHTML( left( prc.auth.displayName, 1 ) )#</span>
-            <div><strong>#encodeForHTML( prc.auth.displayName )#</strong><small>#encodeForHTML( prc.auth.role )# · #encodeForHTML( prc.auth.email )#</small></div>
+            <div><strong>#encodeForHTML( prc.auth.displayName )#</strong><small>#encodeForHTML( $r( "workspace.role.#prc.auth.role#", prc.auth.role ) )# · #encodeForHTML( prc.auth.email )#</small></div>
         </a>
         <form method="post" action="/auth/logout"><input type="hidden" name="csrfToken" value="#encodeForHTMLAttribute( prc.logoutCsrfToken )#"><button class="workspace-back" type="submit"><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##arrow-left"></use></svg> #$r( "app.logout" )#</button></form>
     </aside>
@@ -42,7 +42,7 @@
                         <article class="member-row">
                             <span class="workspace-avatar account-avatar">#encodeForHTML( left( member.display_name, 1 ) )#</span>
                             <div><strong>#encodeForHTML( member.display_name )#</strong><small>#encodeForHTML( member.email )#</small></div>
-                            <span class="role-badge">#encodeForHTML( member.role )#</span>
+                            <span class="role-badge">#encodeForHTML( $r( "workspace.role.#member.role#", member.role ) )#</span>
                         </article>
                     </cfloop>
                 </div>
@@ -67,7 +67,7 @@
             <section class="members-panel pending-panel">
                 <div class="panel-heading"><div><h2>#$r( "members.pending" )#</h2></div><span>#prc.invitations.len()#</span></div>
                 <cfloop array="#prc.invitations#" item="invitation">
-                    <div class="pending-row"><span>#encodeForHTML( invitation.email )#</span><small>#encodeForHTML( invitation.role )#</small></div>
+                    <div class="pending-row"><span>#encodeForHTML( invitation.email )#</span><small>#encodeForHTML( $r( "workspace.role.#invitation.role#", invitation.role ) )#</small></div>
                 </cfloop>
             </section>
         </cfif>

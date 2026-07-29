@@ -36,6 +36,7 @@ component {
         prc.profileCsrfToken = csrfGenerateToken( "profile" );
         prc.passwordCsrfToken = csrfGenerateToken( "profile-password" );
         prc.billingCsrfToken = csrfGenerateToken( "billing" );
+        prc.billingPortalCsrfToken = csrfGenerateToken( "billing-portal" );
         prc.logoutCsrfToken = csrfGenerateToken( "logout" );
         prc.checkoutNotice = rc.checkout ?: "";
         prc.notice = rc.updated ?: rc.passwordChanged ?: "";

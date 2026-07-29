@@ -56,7 +56,7 @@
                 </div>
                 <cfif prc.billing.plan == "premium">
                     <p class="profile-subscription-copy">#$r( "billing.premium.body" )#</p>
-                    <cfif prc.billing.canManage><form method="post" action="/app/billing/portal"><input type="hidden" name="csrfToken" value="#encodeForHTMLAttribute( prc.billingCsrfToken )#"><button class="button button-dark" type="submit"><svg class="icon"><use href="/resources/icons.svg##external"></use></svg> #$r( "billing.portal" )#</button></form></cfif>
+                    <cfif prc.billing.canManage><form method="post" action="/app/billing/portal"><input type="hidden" name="csrfToken" value="#encodeForHTMLAttribute( prc.billingPortalCsrfToken )#"><button class="button button-dark" type="submit"><svg class="icon"><use href="/resources/icons.svg##external"></use></svg> #$r( "billing.portal" )#</button></form></cfif>
                 <cfelseif prc.billing.canManage && prc.billing.configured>
                     <div class="profile-billing-options">
                         <form method="post" action="/app/billing/checkout"><input type="hidden" name="csrfToken" value="#encodeForHTMLAttribute( prc.billingCsrfToken )#"><input type="hidden" name="interval" value="monthly"><button class="billing-option" type="submit"><span><strong>#$r( "billing.monthly.title" )#</strong><small>#$r( "billing.monthly.body" )#</small></span><svg class="icon"><use href="/resources/icons.svg##arrow-right"></use></svg></button></form>

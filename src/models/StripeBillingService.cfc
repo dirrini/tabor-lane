@@ -109,7 +109,7 @@ component singleton {
 		}
 		var response = stripePost(
 			"/v1/billing_portal/sessions",
-			{ customer = billing.customerId, return_url = "#variables.baseUrl#/app/billing" }
+			{ customer = billing.customerId, return_url = "#variables.baseUrl#/app/profile" }
 		);
 		return response.success && ( response.data.url ?: "" ).len()
 			? { success = true, url = response.data.url }

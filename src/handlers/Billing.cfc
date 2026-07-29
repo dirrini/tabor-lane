@@ -38,6 +38,7 @@ component {
             prc.billing = stripeBillingService.getBilling( prc.auth.id, prc.auth.workspaceId );
         }
         prc.billingCsrfToken = csrfGenerateToken( "billing" );
+        prc.billingPortalCsrfToken = csrfGenerateToken( "billing-portal" );
         prc.logoutCsrfToken = csrfGenerateToken( "logout" );
         prc.checkoutNotice = rc.checkout ?: "";
         prc.error = rc.error ?: "";
@@ -80,14 +81,14 @@ component {
     }
 
     function portal( event, rc, prc ) {
-        if ( !csrfVerifyToken( rc.csrfToken ?: "", "billing" ) ) {
-            relocate( uri = "/app/billing?error=expired" );
+        if ( !csrfVerifyToken( rc.csrfToken ?: "", "billing-portal" ) ) {
+            relocate( uri = "/app/profile?error=portal_expired" );
         }
         var result = stripeBillingService.createPortal( prc.auth.id, prc.auth.workspaceId );
         if ( result.success ) {
             relocate( uri = result.url );
         }
-        relocate( uri = "/app/billing?error=#urlEncodedFormat( result.code )#" );
+        relocate( uri = "/app/profile?error=portal_#urlEncodedFormat( result.code )#" );
     }
 
     function webhook( event, rc, prc ) {

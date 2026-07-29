@@ -53,7 +53,7 @@
                 </dl>
                 <cfif prc.billing.canManage>
                     <form method="post" action="/app/billing/portal">
-                        <input type="hidden" name="csrfToken" value="#encodeForHTMLAttribute( prc.billingCsrfToken )#">
+                        <input type="hidden" name="csrfToken" value="#encodeForHTMLAttribute( prc.billingPortalCsrfToken )#">
                         <button class="button button-ghost" type="submit"><svg class="icon"><use href="/resources/icons.svg##external"></use></svg> #$r( "billing.portal" )#</button>
                     </form>
                 </cfif>

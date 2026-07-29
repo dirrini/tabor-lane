@@ -16,6 +16,33 @@
     });
   }
 
+  const workspaceShell = document.querySelector(".workspace-shell");
+  const workspaceMenuToggle = document.querySelector("[data-workspace-menu-toggle]");
+  const workspaceMenuClose = document.querySelectorAll("[data-workspace-menu-close]");
+
+  if (workspaceShell && workspaceMenuToggle) {
+    const setWorkspaceMenu = (open) => {
+      workspaceShell.classList.toggle("menu-open", open);
+      workspaceMenuToggle.setAttribute("aria-expanded", String(open));
+      document.body.classList.toggle("workspace-menu-open", open);
+      if (open) workspaceShell.querySelector("[data-workspace-menu-close]")?.focus();
+      else workspaceMenuToggle.focus();
+    };
+
+    workspaceMenuToggle.addEventListener("click", () => setWorkspaceMenu(true));
+    workspaceMenuClose.forEach((button) => {
+      button.addEventListener("click", () => setWorkspaceMenu(false));
+    });
+    workspaceShell.querySelectorAll(".workspace-sidebar nav a").forEach((link) => {
+      link.addEventListener("click", () => setWorkspaceMenu(false));
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && workspaceShell.classList.contains("menu-open")) {
+        setWorkspaceMenu(false);
+      }
+    });
+  }
+
   const billingToggle = document.querySelector("[data-billing-toggle]");
   const premiumPrice = document.querySelector("[data-monthly][data-yearly]");
 

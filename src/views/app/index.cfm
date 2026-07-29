@@ -1,6 +1,8 @@
 <cfoutput>
 <main class="workspace-shell" data-workspace data-csrf-token="#encodeForHTMLAttribute( prc.cardCsrfToken )#" data-move-success="#encodeForHTMLAttribute( $r( 'app.card.moved' ) )#" data-move-error="#encodeForHTMLAttribute( $r( 'app.card.moveError' ) )#">
+    <button class="workspace-menu-toggle" type="button" data-workspace-menu-toggle aria-label="#$r( 'app.menu.open' )#" aria-expanded="false"><svg class="icon"><use href="/resources/icons.svg##menu"></use></svg></button>
     <aside class="workspace-sidebar">
+        <button class="workspace-menu-close" type="button" data-workspace-menu-close aria-label="#$r( 'app.menu.close' )#"><svg class="icon"><use href="/resources/icons.svg##close"></use></svg></button>
         <a class="brand" href="/">
             <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
             <span class="brand-name">Tabor<span>Lane</span></span>
@@ -27,6 +29,7 @@
             <button class="workspace-back" type="submit"><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##arrow-left"></use></svg> #$r( "app.logout" )#</button>
         </form>
     </aside>
+    <button class="workspace-menu-backdrop" type="button" data-workspace-menu-close aria-label="#$r( 'app.menu.close' )#"></button>
 
     <section class="workspace-main">
         <cfif !prc.workspaceBoard.found>

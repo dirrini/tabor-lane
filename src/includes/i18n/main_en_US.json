@@ -272,5 +272,7 @@
   "profile.error.rate": "Too many password attempts. Please try again later.",
   "profile.subscription.eyebrow": "Subscription",
   "profile.subscription.manage": "Manage your Premium plan",
-  "profile.subscription.stripe": "Tabor Lane does not store sensitive payment data. Checkout and subscription management are securely handled by Stripe."
+  "profile.subscription.stripe": "Tabor Lane does not store sensitive payment data. Checkout and subscription management are securely handled by Stripe.",
+  "app.menu.open": "Open workspace menu",
+  "app.menu.close": "Close workspace menu"
 }

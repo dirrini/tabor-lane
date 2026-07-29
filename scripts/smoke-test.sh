@@ -48,6 +48,7 @@ grep --quiet "CI Workspace" "$app_html"
 grep --quiet "owner" "$app_html"
 grep --quiet "data-column-id=" "$app_html"
 grep --quiet "data-card-id=" "$app_html"
+grep --quiet "data-workspace-menu-toggle" "$app_html"
 
 curl --fail --silent --show-error --cookie "$cookie_jar" "$base_url/app/billing" > "$billing_html"
 grep --quiet "Plan and billing" "$billing_html"
@@ -58,6 +59,7 @@ grep --quiet "Your profile" "$profile_html"
 grep --quiet "Workspace plan" "$profile_html"
 grep --quiet "My work" "$profile_html"
 grep --quiet "Automations" "$profile_html"
+grep --quiet "data-workspace-menu-close" "$profile_html"
 profile_csrf="$(
   sed -n '/action="\/app\/profile\/details"/,/<\/form>/p' "$profile_html" \
     | sed -n 's/.*name="csrfToken" value="\([^"]*\)".*/\1/p' \

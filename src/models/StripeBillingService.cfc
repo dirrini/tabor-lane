@@ -44,6 +44,14 @@ component singleton {
 		};
 	}
 
+	struct function reconcileBilling( required string userId, required string workspaceId ){
+		var billing = getBilling( arguments.userId, arguments.workspaceId );
+		if ( !billing.found || !billing.subscriptionId.len() || !variables.secretKey.len() ) {
+			return { success = false, code = "not_available" };
+		}
+		return reconcileSubscriptionById( billing.subscriptionId, arguments.workspaceId );
+	}
+
 	struct function createCheckout(
 		required string userId,
 		required string workspaceId,
@@ -118,6 +126,8 @@ component singleton {
 				return { success = false, code = "invalid_event" };
 			}
 			var eventObject = stripeEvent.data.object ?: {};
+			var subscriptionToReconcile = "";
+			var checkoutWorkspaceId = "";
 			transaction {
 				var inserted = queryExecute(
 					"INSERT INTO stripe_webhook_event (stripe_event_id, event_type)
@@ -132,6 +142,10 @@ component singleton {
 				}
 				if ( stripeEvent.type == "checkout.session.completed" ) {
 					syncCheckoutSession( eventObject );
+					subscriptionToReconcile = eventObject.subscription ?: "";
+					checkoutWorkspaceId = eventObject.metadata.workspace_id
+						?: eventObject.client_reference_id
+						?: "";
 				} else if (
 					listFindNoCase(
 						"customer.subscription.created,customer.subscription.updated,customer.subscription.deleted",
@@ -140,6 +154,9 @@ component singleton {
 				) {
 					syncSubscription( eventObject, stripeEvent.type );
 				}
+			}
+			if ( subscriptionToReconcile.len() && checkoutWorkspaceId.len() ) {
+				reconcileSubscriptionById( subscriptionToReconcile, checkoutWorkspaceId );
 			}
 			return { success = true };
 		} catch ( any exception ) {
@@ -200,17 +217,16 @@ component singleton {
 			interval = subscription.items.data[ 1 ].price.recurring.interval ?: "";
 		}
 		var premium = listFindNoCase( "active,trialing,past_due", status ) > 0;
-		var periodEnd = subscription.current_period_end ?: 0;
-		if ( !periodEnd && ( subscription.items.data ?: [] ).len() ) {
-			periodEnd = subscription.items.data[ 1 ].current_period_end ?: 0;
-		}
+		var periodEnd = getSubscriptionPeriodEnd( subscription );
 		queryExecute(
 			"INSERT INTO workspace_billing
 			    (workspace_id, stripe_customer_id, stripe_subscription_id, stripe_price_id,
 			     subscription_status, billing_interval, current_period_end, cancel_at_period_end)
 			 VALUES
 			    (CAST(:workspaceId AS UUID), :customerId, :subscriptionId, :priceId,
-			     :status, :billingInterval, :periodEnd, :cancelAtPeriodEnd)
+			     :status, :billingInterval,
+			     CASE WHEN :periodEnd > 0 THEN to_timestamp(:periodEnd) ELSE NULL END,
+			     :cancelAtPeriodEnd)
 			 ON CONFLICT (workspace_id) DO UPDATE SET
 			    stripe_customer_id = EXCLUDED.stripe_customer_id,
 			    stripe_subscription_id = EXCLUDED.stripe_subscription_id,
@@ -227,8 +243,13 @@ component singleton {
 				priceId = nullableText( priceId ),
 				status = status,
 				billingInterval = nullableText( interval ),
-				periodEnd = nullableTimestamp( periodEnd ),
-				cancelAtPeriodEnd = subscription.cancel_at_period_end ?: false
+				periodEnd = { value = periodEnd, sqltype = "bigint" },
+				cancelAtPeriodEnd = {
+					value = structKeyExists( subscription, "cancel_at_period_end" )
+						? subscription.cancel_at_period_end
+						: false,
+					sqltype = "boolean"
+				}
 			}
 		);
 		queryExecute(
@@ -236,6 +257,90 @@ component singleton {
 			 WHERE id = CAST(:workspaceId AS UUID)",
 			{ workspaceId = workspaceId, plan = premium ? "premium" : "free" }
 		);
+	}
+
+	private struct function reconcileSubscriptionById(
+		required string subscriptionId,
+		required string workspaceId
+	){
+		var response = stripeGet( "/v1/subscriptions/#urlEncodedFormat( arguments.subscriptionId )#" );
+		if ( !response.success ) {
+			return { success = false, code = "stripe_error" };
+		}
+		var subscription = response.data;
+		var subscriptionWorkspaceId = subscription.metadata.workspace_id ?: "";
+		if (
+			!subscriptionWorkspaceId.len()
+			|| compareNoCase( subscriptionWorkspaceId, arguments.workspaceId ) != 0
+		) {
+			writeLog(
+				file = "application",
+				type = "warning",
+				text = "Stripe subscription reconciliation rejected due to workspace metadata mismatch."
+			);
+			return { success = false, code = "workspace_mismatch" };
+		}
+		syncSubscription( subscription, "customer.subscription.updated" );
+		return { success = true };
+	}
+
+	private numeric function getSubscriptionPeriodEnd( required struct subscription ){
+		if (
+			structKeyExists( arguments.subscription, "current_period_end" )
+			&& isNumeric( arguments.subscription.current_period_end )
+		) {
+			return val( arguments.subscription.current_period_end );
+		}
+		if (
+			!structKeyExists( arguments.subscription, "items" )
+			|| !isStruct( arguments.subscription.items )
+			|| !structKeyExists( arguments.subscription.items, "data" )
+			|| !isArray( arguments.subscription.items.data )
+		) {
+			return 0;
+		}
+		var periodEnd = 0;
+		for ( var item in arguments.subscription.items.data ) {
+			if ( structKeyExists( item, "current_period_end" ) && isNumeric( item.current_period_end ) ) {
+				var itemPeriodEnd = val( item.current_period_end );
+				if ( itemPeriodEnd > 0 && ( periodEnd == 0 || itemPeriodEnd < periodEnd ) ) {
+					periodEnd = itemPeriodEnd;
+				}
+			}
+		}
+		return periodEnd;
+	}
+
+	private struct function stripeGet( required string path ){
+		try {
+			var response = {};
+			cfhttp(
+				method = "GET",
+				url = "https://api.stripe.com#arguments.path#",
+				result = "response",
+				timeout = 15
+			) {
+				cfhttpparam( type = "header", name = "Authorization", value = "Bearer #variables.secretKey#" );
+			}
+			var status = val( response.statusCode ?: 0 );
+			var data = deserializeJSON( response.fileContent ?: "{}" );
+			if ( status >= 200 && status < 300 ) {
+				return { success = true, data = data };
+			}
+			writeLog(
+				file = "application",
+				type = "error",
+				text = "Stripe API rejected reconciliation request. Status: #status#."
+			);
+			return { success = false, status = status };
+		} catch ( any exception ) {
+			writeLog(
+				file = "application",
+				type = "error",
+				text = "Stripe reconciliation request failed: #exception.message#"
+			);
+			return { success = false };
+		}
 	}
 
 	private struct function stripePost( required string path, required struct fields ){
@@ -316,14 +421,6 @@ component singleton {
 
 	private struct function nullableText( required string value ){
 		return { value = arguments.value, null = !arguments.value.len(), sqltype = "varchar" };
-	}
-
-	private struct function nullableTimestamp( required numeric epoch ){
-		return {
-			value = arguments.epoch > 0 ? createObject( "java", "java.util.Date" ).init( javacast( "long", arguments.epoch * 1000 ) ) : "",
-			null = arguments.epoch <= 0,
-			sqltype = "timestamp"
-		};
 	}
 
 }

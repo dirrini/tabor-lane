@@ -25,6 +25,14 @@ component {
         if ( !prc.profile.found ) relocate( uri = "/app" );
         prc.account = prc.profile.data;
         prc.billing = stripeBillingService.getBilling( prc.auth.id, prc.auth.workspaceId );
+        if (
+            prc.billing.plan == "premium"
+            && prc.billing.subscriptionId.len()
+            && !isDate( prc.billing.currentPeriodEnd )
+        ) {
+            stripeBillingService.reconcileBilling( prc.auth.id, prc.auth.workspaceId );
+            prc.billing = stripeBillingService.getBilling( prc.auth.id, prc.auth.workspaceId );
+        }
         prc.profileCsrfToken = csrfGenerateToken( "profile" );
         prc.passwordCsrfToken = csrfGenerateToken( "profile-password" );
         prc.billingCsrfToken = csrfGenerateToken( "billing" );

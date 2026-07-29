@@ -29,6 +29,14 @@ component {
         prc.page = "billing";
         prc.pageTitle = $r( "billing.title" );
         prc.billing = stripeBillingService.getBilling( prc.auth.id, prc.auth.workspaceId );
+        if (
+            prc.billing.plan == "premium"
+            && prc.billing.subscriptionId.len()
+            && !isDate( prc.billing.currentPeriodEnd )
+        ) {
+            stripeBillingService.reconcileBilling( prc.auth.id, prc.auth.workspaceId );
+            prc.billing = stripeBillingService.getBilling( prc.auth.id, prc.auth.workspaceId );
+        }
         prc.billingCsrfToken = csrfGenerateToken( "billing" );
         prc.logoutCsrfToken = csrfGenerateToken( "logout" );
         prc.checkoutNotice = rc.checkout ?: "";
@@ -54,6 +62,14 @@ component {
 
     function status( event, rc, prc ) {
         var billing = stripeBillingService.getBilling( prc.auth.id, prc.auth.workspaceId );
+        if (
+            billing.plan == "premium"
+            && billing.subscriptionId.len()
+            && !isDate( billing.currentPeriodEnd )
+        ) {
+            stripeBillingService.reconcileBilling( prc.auth.id, prc.auth.workspaceId );
+            billing = stripeBillingService.getBilling( prc.auth.id, prc.auth.workspaceId );
+        }
         event.renderData(
             type = "json",
             data = {

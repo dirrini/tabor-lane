@@ -109,7 +109,10 @@ component singleton {
 		}
 		var response = stripePost(
 			"/v1/billing_portal/sessions",
-			{ customer = billing.customerId, return_url = "#variables.baseUrl#/app/profile" }
+			{
+				"customer" = billing.customerId,
+				"return_url" = "#variables.baseUrl#/app/profile"
+			}
 		);
 		return response.success && ( response.data.url ?: "" ).len()
 			? { success = true, url = response.data.url }
@@ -356,7 +359,7 @@ component singleton {
 				for ( var fieldName in arguments.fields ) {
 					cfhttpparam(
 						type = "formfield",
-						name = fieldName,
+						name = lCase( fieldName ),
 						value = arguments.fields[ fieldName ]
 					);
 				}

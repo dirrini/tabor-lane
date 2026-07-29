@@ -36,6 +36,9 @@
     workspaceShell.querySelectorAll(".workspace-sidebar nav a").forEach((link) => {
       link.addEventListener("click", () => setWorkspaceMenu(false));
     });
+    workspaceShell.querySelector(".workspace-account")?.addEventListener("click", () => {
+      setWorkspaceMenu(false);
+    });
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape" && workspaceShell.classList.contains("menu-open")) {
         setWorkspaceMenu(false);
@@ -62,10 +65,15 @@
     });
   }
 
-  const pendingBilling = document.querySelector("[data-billing-pending]");
-  if (pendingBilling) {
+  const initPendingBilling = (root) => {
+    const pendingBilling = root.matches?.("[data-billing-pending]")
+      ? root
+      : root.querySelector?.("[data-billing-pending]");
+    if (!pendingBilling || pendingBilling.dataset.billingInitialized) return;
+    pendingBilling.dataset.billingInitialized = "true";
     const startedAt = Date.now();
     const pollBilling = async () => {
+      if (!pendingBilling.isConnected) return;
       try {
         const response = await fetch(pendingBilling.dataset.billingStatusUrl, {
           headers: { Accept: "application/json" },
@@ -74,9 +82,16 @@
         if (response.ok) {
           const billing = await response.json();
           if (billing.plan === "premium") {
-            window.location.replace(
-              pendingBilling.dataset.billingRefreshUrl || window.location.pathname
-            );
+            const refreshUrl =
+              pendingBilling.dataset.billingRefreshUrl || window.location.pathname;
+            if (window.htmx && document.querySelector("#workspace-main")) {
+              window.htmx.ajax("GET", refreshUrl, {
+                target: "#workspace-main",
+                swap: "outerHTML show:top",
+              });
+            } else {
+              window.location.replace(refreshUrl);
+            }
             return;
           }
         }
@@ -88,10 +103,14 @@
       }
     };
     window.setTimeout(pollBilling, 500);
-  }
+  };
 
-  const workspace = document.querySelector("[data-workspace]");
-  if (workspace) {
+  const initWorkspaceBoard = (root) => {
+    const workspace = root.matches?.("[data-workspace]")
+      ? root
+      : root.querySelector?.("[data-workspace]");
+    if (!workspace || workspace.dataset.workspaceInitialized) return;
+    workspace.dataset.workspaceInitialized = "true";
     const cardForm = workspace.querySelector("[data-card-form]");
     const cardFormToggle = workspace.querySelector("[data-card-form-toggle]");
     const cardFormCancel = workspace.querySelector("[data-card-form-cancel]");
@@ -173,5 +192,47 @@
         }
       });
     });
-  }
+  };
+
+  const updateWorkspaceNavigation = (root) => {
+    const workspaceMain = root.matches?.("[data-workspace-page]")
+      ? root
+      : root.querySelector?.("[data-workspace-page]");
+    if (!workspaceMain || !workspaceShell) return;
+    const page = workspaceMain.dataset.workspacePage;
+    const paths = { app: "/app", members: "/app/members" };
+
+    workspaceShell.querySelectorAll(".workspace-sidebar nav a").forEach((link) => {
+      const active = paths[page] && link.getAttribute("href") === paths[page];
+      link.classList.toggle("active", Boolean(active));
+      if (active) link.setAttribute("aria-current", "page");
+      else link.removeAttribute("aria-current");
+    });
+
+    const account = workspaceShell.querySelector(".workspace-account");
+    const accountActive = page === "profile" || page === "billing";
+    account?.classList.toggle("active", accountActive);
+    if (accountActive) account?.setAttribute("aria-current", "page");
+    else account?.removeAttribute("aria-current");
+
+    document.body.className = `page-${page}`;
+  };
+
+  const initDynamicContent = (root) => {
+    initPendingBilling(root);
+    initWorkspaceBoard(root);
+    updateWorkspaceNavigation(root);
+  };
+
+  initDynamicContent(document);
+  document.body.addEventListener("htmx:load", (event) => {
+    initDynamicContent(event.detail.elt);
+  });
+  document.body.addEventListener("htmx:beforeSwap", (event) => {
+    const responseUrl = event.detail.xhr.responseURL;
+    if (responseUrl && new URL(responseUrl).pathname === "/login") {
+      event.preventDefault();
+      window.location.assign(responseUrl);
+    }
+  });
 })();

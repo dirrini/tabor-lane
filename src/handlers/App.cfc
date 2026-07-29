@@ -5,6 +5,7 @@ component {
     property name="notificationService" inject="NotificationService";
     property name="rateLimitService" inject="RateLimitService";
     property name="authService" inject="AuthService";
+    property name="workspaceViewService" inject="WorkspaceViewService";
 
     this.allowedMethods = {
         index = "GET",
@@ -38,7 +39,7 @@ component {
         prc.developmentInvitationToken = ( server.system.environment.APP_ENV ?: "development" ) != "production"
             ? session.developmentInvitationToken ?: ""
             : "";
-        event.setView( "app/members" );
+        workspaceViewService.render( event, prc, "app/members" );
     }
 
     function inviteMember( event, rc, prc ) {
@@ -74,7 +75,7 @@ component {
         prc.workspaceBoard = boardService.getWorkspaceBoard( prc.auth.id, prc.auth.workspaceId );
         prc.cardCsrfToken = csrfGenerateToken( "card-write" );
         prc.logoutCsrfToken = csrfGenerateToken( "logout" );
-        event.setView( "app/index" );
+        workspaceViewService.render( event, prc, "app/index" );
     }
 
     function createCard( event, rc, prc ) {

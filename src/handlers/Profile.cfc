@@ -4,6 +4,7 @@ component {
     property name="stripeBillingService" inject="StripeBillingService";
     property name="notificationService" inject="NotificationService";
     property name="rateLimitService" inject="RateLimitService";
+    property name="workspaceViewService" inject="WorkspaceViewService";
 
     this.allowedMethods = {
         index = "GET",
@@ -45,7 +46,7 @@ component {
         prc.checkoutNotice = rc.checkout ?: "";
         prc.notice = rc.updated ?: rc.passwordChanged ?: "";
         prc.error = rc.error ?: "";
-        event.setView( "app/profile" );
+        workspaceViewService.render( event, prc, "app/profile" );
     }
 
     function update( event, rc, prc ) {

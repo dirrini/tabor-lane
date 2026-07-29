@@ -2,6 +2,7 @@ component {
 
     property name="stripeBillingService" inject="StripeBillingService";
     property name="authService" inject="AuthService";
+    property name="workspaceViewService" inject="WorkspaceViewService";
 
     this.allowedMethods = {
         index = "GET",
@@ -46,7 +47,7 @@ component {
         prc.logoutCsrfToken = csrfGenerateToken( "logout" );
         prc.checkoutNotice = rc.checkout ?: "";
         prc.error = rc.error ?: "";
-        event.setView( "app/billing" );
+        workspaceViewService.render( event, prc, "app/billing" );
     }
 
     function checkout( event, rc, prc ) {

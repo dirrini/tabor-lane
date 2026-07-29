@@ -9,10 +9,12 @@ check_email_html="$(mktemp)"
 members_html="$(mktemp)"
 billing_html="$(mktemp)"
 profile_html="$(mktemp)"
+partial_html="$(mktemp)"
+history_restore_html="$(mktemp)"
 invitation_html="$(mktemp)"
 member_cookie_jar="$(mktemp)"
 member_signup_html="$(mktemp)"
-trap 'rm -f "$cookie_jar" "$signup_html" "$app_html" "$check_email_html" "$members_html" "$billing_html" "$profile_html" "$invitation_html" "$member_cookie_jar" "$member_signup_html"' EXIT
+trap 'rm -f "$cookie_jar" "$signup_html" "$app_html" "$check_email_html" "$members_html" "$billing_html" "$profile_html" "$partial_html" "$history_restore_html" "$invitation_html" "$member_cookie_jar" "$member_signup_html"' EXIT
 
 curl --fail --silent --show-error --cookie-jar "$cookie_jar" "$base_url/signup" > "$signup_html"
 csrf_token="$(sed -n 's/.*name="csrfToken" value="\([^"]*\)".*/\1/p' "$signup_html" | head -1)"
@@ -49,6 +51,28 @@ grep --quiet "Owner" "$app_html"
 grep --quiet "data-column-id=" "$app_html"
 grep --quiet "data-card-id=" "$app_html"
 grep --quiet "data-workspace-menu-toggle" "$app_html"
+grep --quiet '<!doctype html>' "$app_html"
+grep --quiet 'class="workspace-sidebar"' "$app_html"
+
+for partial_path in app app/members app/profile app/billing; do
+  curl --fail --silent --show-error --cookie "$cookie_jar" \
+    --header "HX-Request: true" "$base_url/$partial_path" > "$partial_html"
+  grep --quiet 'id="workspace-main"' "$partial_html"
+  if grep --quiet '<!doctype html>' "$partial_html"; then
+    echo "HTMX response unexpectedly included the full document for /$partial_path" >&2
+    exit 1
+  fi
+  if grep --quiet 'class="workspace-sidebar"' "$partial_html"; then
+    echo "HTMX response unexpectedly included the shared sidebar for /$partial_path" >&2
+    exit 1
+  fi
+done
+
+curl --fail --silent --show-error --cookie "$cookie_jar" \
+  --header "HX-Request: true" --header "HX-History-Restore-Request: true" \
+  "$base_url/app" > "$history_restore_html"
+grep --quiet '<!doctype html>' "$history_restore_html"
+grep --quiet 'class="workspace-sidebar"' "$history_restore_html"
 
 curl --fail --silent --show-error --cookie "$cookie_jar" "$base_url/app/billing" > "$billing_html"
 grep --quiet "Plan and billing" "$billing_html"

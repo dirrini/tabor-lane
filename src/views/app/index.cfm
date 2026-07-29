@@ -1,37 +1,6 @@
 <cfoutput>
-<main class="workspace-shell" data-workspace data-csrf-token="#encodeForHTMLAttribute( prc.cardCsrfToken )#" data-move-success="#encodeForHTMLAttribute( $r( 'app.card.moved' ) )#" data-move-error="#encodeForHTMLAttribute( $r( 'app.card.moveError' ) )#">
-    <button class="workspace-menu-toggle" type="button" data-workspace-menu-toggle aria-label="#$r( 'app.menu.open' )#" aria-expanded="false"><svg class="icon"><use href="/resources/icons.svg##menu"></use></svg></button>
-    <aside class="workspace-sidebar">
-        <button class="workspace-menu-close" type="button" data-workspace-menu-close aria-label="#$r( 'app.menu.close' )#"><svg class="icon"><use href="/resources/icons.svg##close"></use></svg></button>
-        <a class="brand" href="/">
-            <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
-            <span class="brand-name">Tabor<span>Lane</span></span>
-        </a>
-        <div class="workspace-picker">
-            <span class="workspace-avatar">#encodeForHTML( left( prc.auth.workspaceName, 1 ) )#</span>
-            <div><small>#$r( "app.workspace" )#</small><strong>#encodeForHTML( prc.auth.workspaceName )#</strong></div>
-            <b><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##chevron-down"></use></svg></b>
-        </div>
-        <nav>
-            <a href="##"><span><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##home"></use></svg></span>#$r( "app.myWork" )#</a>
-            <a href="/app" class="active"><span><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##board"></use></svg></span>#$r( "app.boards" )#</a>
-            <a href="/app/members"><span><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##users"></use></svg></span>#$r( "members.nav" )#</a>
-            <a href="##"><span><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##chart"></use></svg></span>#$r( "app.analytics" )#</a>
-            <a href="##"><span><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##bolt"></use></svg></span>#$r( "app.automations" )#</a>
-            <a href="##"><span><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##settings"></use></svg></span>#$r( "app.settings" )#</a>
-        </nav>
-        <a class="workspace-account" href="/app/profile">
-            <span class="workspace-avatar account-avatar">#encodeForHTML( left( prc.auth.displayName, 1 ) )#</span>
-            <div><strong>#encodeForHTML( prc.auth.displayName )#</strong><small>#encodeForHTML( $r( "workspace.role.#prc.auth.role#", prc.auth.role ) )# · #encodeForHTML( prc.auth.email )#</small></div>
-        </a>
-        <form method="post" action="/auth/logout">
-            <input type="hidden" name="csrfToken" value="#encodeForHTMLAttribute( prc.logoutCsrfToken )#">
-            <button class="workspace-back" type="submit"><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##arrow-left"></use></svg> #$r( "app.logout" )#</button>
-        </form>
-    </aside>
-    <button class="workspace-menu-backdrop" type="button" data-workspace-menu-close aria-label="#$r( 'app.menu.close' )#"></button>
-
-    <section class="workspace-main">
+<cfif prc.isHtmxRequest><title>#encodeForHTML( prc.pageTitle )#</title></cfif>
+    <section id="workspace-main" class="workspace-main" data-workspace-page="app" data-workspace data-csrf-token="#encodeForHTMLAttribute( prc.cardCsrfToken )#" data-move-success="#encodeForHTMLAttribute( $r( 'app.card.moved' ) )#" data-move-error="#encodeForHTMLAttribute( $r( 'app.card.moveError' ) )#">
         <cfif !prc.workspaceBoard.found>
             <div class="app-empty-state"><svg class="icon"><use href="/resources/icons.svg##board"></use></svg><h1>#$r( "app.empty.title" )#</h1><p>#$r( "app.empty.body" )#</p></div>
         <cfelse>
@@ -85,5 +54,4 @@
             <div class="board-toast" role="status" aria-live="polite" data-board-toast></div>
         </cfif>
     </section>
-</main>
 </cfoutput>

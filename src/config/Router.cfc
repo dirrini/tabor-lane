@@ -17,6 +17,7 @@ component {
         route( "/app/profile" ).to( "Profile.index" );
         post( "/app/workspaces/:workspaceId/select" ).to( "Workspaces.select" );
         get( "/app/users/:userId/avatar" ).to( "Avatars.image" );
+        get( "/app/analytics/metrics" ).to( "Analytics.metrics" );
         post( "/app/my-work/cards/:cardId" ).to( "MyWork.updateCard" );
         get( "/app/my-work" ).to( "MyWork.index" );
         post( "/app/members/invite" ).to( "App.inviteMember" );

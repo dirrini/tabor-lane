@@ -23,7 +23,20 @@ avatar_before="$(mktemp)"
 avatar_after="$(mktemp)"
 boards_html="$(mktemp)"
 my_work_html="$(mktemp)"
-trap 'rm -f "$cookie_jar" "$signup_html" "$app_html" "$check_email_html" "$members_html" "$billing_html" "$profile_html" "$card_html" "$partial_html" "$history_restore_html" "$invitation_html" "$member_cookie_jar" "$member_signup_html" "$attachment_payload" "$attachment_download" "$avatar_payload" "$avatar_before" "$avatar_after" "$boards_html" "$my_work_html"' EXIT
+analytics_json="$(mktemp)"
+analytics_headers="$(mktemp)"
+trap 'rm -f "$cookie_jar" "$signup_html" "$app_html" "$check_email_html" "$members_html" "$billing_html" "$profile_html" "$card_html" "$partial_html" "$history_restore_html" "$invitation_html" "$member_cookie_jar" "$member_signup_html" "$attachment_payload" "$attachment_download" "$avatar_payload" "$avatar_before" "$avatar_after" "$boards_html" "$my_work_html" "$analytics_json" "$analytics_headers"' EXIT
+
+assert_analytics_open_cards() {
+  node -e '
+    const fs=require("fs");
+    const payload=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));
+    const get=(value,name)=>value[Object.keys(value).find((key)=>key.toLowerCase()===name.toLowerCase())];
+    const actual=Number(get(get(payload,"summary"),"openCards"));
+    const expected=Number(process.argv[2]);
+    if(actual!==expected) throw new Error(`Expected openCards=${expected}, received ${actual}`);
+  ' "$1" "$2"
+}
 
 curl --fail --silent --show-error --cookie-jar "$cookie_jar" "$base_url/signup" > "$signup_html"
 csrf_token="$(sed -n 's/.*name="csrfToken" value="\([^"]*\)".*/\1/p' "$signup_html" | head -1)"
@@ -252,11 +265,13 @@ password_update_status="$(
 test "$password_update_status" = "302"
 
 csrf_token="$(sed -n 's/.*data-csrf-token="\([^"]*\)".*/\1/p' "$app_html" | head -1)"
+analytics_initial_board_id="$(sed -n 's/.*data-board-id="\([^"]*\)".*/\1/p' "$app_html" | head -1)"
 column_id="$(grep -o 'data-column-id="[^"]*"' "$app_html" | head -1 | cut -d'"' -f2)"
 target_column_id="$(grep -o 'data-column-id="[^"]*"' "$app_html" | sed -n '2p' | cut -d'"' -f2)"
 last_column_id="$(grep -o 'data-column-id="[^"]*"' "$app_html" | tail -1 | cut -d'"' -f2)"
 card_id="$(grep -o 'data-card-id="[^"]*"' "$app_html" | head -1 | cut -d'"' -f2)"
 test -n "$csrf_token"
+test -n "$analytics_initial_board_id"
 test -n "$column_id"
 test -n "$target_column_id"
 test -n "$last_column_id"
@@ -423,6 +438,260 @@ complete_card_response="$(
     --data-urlencode "columnId=$last_column_id"
 )"
 printf '%s' "$complete_card_response" | grep --quiet '"success":true'
+
+analytics_exact_fixture="false"
+if command -v docker > /dev/null 2>&1 \
+  && analytics_db_user="$(docker compose exec -T postgres printenv POSTGRES_USER 2> /dev/null | tr -d '\r')" \
+  && analytics_db_name="$(docker compose exec -T postgres printenv POSTGRES_DB 2> /dev/null | tr -d '\r')"; then
+  printf '%s\n' \
+    "UPDATE card" \
+    "   SET created_at=(CURRENT_DATE-10)+TIME '12:00'," \
+    "       started_at=(CURRENT_DATE-5)+TIME '12:00'," \
+    "       completed_at=(CURRENT_DATE-1)+TIME '12:00'," \
+    "       updated_at=now()" \
+    " WHERE id=CAST(:'card_id' AS UUID);" \
+    | docker compose exec -T postgres psql \
+      --username "$analytics_db_user" \
+      --dbname "$analytics_db_name" \
+      --set ON_ERROR_STOP=1 \
+      --set card_id="$managed_card_id" \
+      --file=- > /dev/null
+  analytics_exact_fixture="true"
+fi
+
+analytics_from_date="$(date -u -d '-2 days' +%F)"
+analytics_to_date="$(date -u +%F)"
+curl --fail --silent --show-error --get --cookie "$cookie_jar" \
+  --dump-header "$analytics_headers" \
+  --data-urlencode "fromDate=$analytics_from_date" \
+  --data-urlencode "toDate=$analytics_to_date" \
+  --data-urlencode "boardId=$analytics_initial_board_id" \
+  "$base_url/app/analytics/metrics" > "$analytics_json"
+grep --ignore-case --quiet '^Cache-Control: no-store' "$analytics_headers"
+grep --quiet '"dataQuality"' "$analytics_json"
+grep --quiet '"openCards"' "$analytics_json"
+node - "$analytics_json" "$analytics_exact_fixture" <<'NODE'
+const fs = require("fs");
+const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+const exact = process.argv[3] === "true";
+const field = (value, name) => {
+  const key = Object.keys(value).find((candidate) => candidate.toLowerCase() === name.toLowerCase());
+  if (!key) throw new Error(`Missing Analytics field: ${name}`);
+  return value[key];
+};
+const summary = field(payload, "summary");
+const leadTime = field(summary, "leadTime");
+const cycleTime = field(summary, "cycleTime");
+const trend = field(payload, "throughputTrend");
+const period = field(payload, "period");
+
+if (field(payload, "found") !== true || field(payload, "code").toLowerCase() !== "ok") {
+  throw new Error("Analytics did not return a successful contract");
+}
+for (const collection of [
+  "cardsByLane",
+  "agingCards",
+  "priorityDistribution",
+  "assigneeDistribution"
+]) {
+  if (!Array.isArray(field(payload, collection))) {
+    throw new Error(`Analytics field is not an array: ${collection}`);
+  }
+}
+if (!Array.isArray(trend) || trend.length !== 3) {
+  throw new Error(`Expected three daily throughput buckets, received ${trend.length}`);
+}
+if (Number(field(summary, "throughput")) !== 1) {
+  throw new Error(`Expected throughput 1, received ${field(summary, "throughput")}`);
+}
+if (trend.reduce((total, bucket) => total + Number(field(bucket, "count")), 0) !== 1) {
+  throw new Error("Daily throughput does not reconcile with the summary");
+}
+if (Number(field(period, "days")) !== 3 || field(period, "timezone") !== "UTC") {
+  throw new Error("Analytics period metadata is inconsistent");
+}
+if (exact) {
+  const expected = [
+    [leadTime, "sampleSize", 1],
+    [leadTime, "averageSeconds", 777600],
+    [leadTime, "medianSeconds", 777600],
+    [leadTime, "p85Seconds", 777600],
+    [cycleTime, "sampleSize", 1],
+    [cycleTime, "averageSeconds", 345600],
+    [cycleTime, "medianSeconds", 345600],
+    [cycleTime, "p85Seconds", 345600]
+  ];
+  for (const [section, name, expectedValue] of expected) {
+    const actual = Number(field(section, name));
+    if (actual !== expectedValue) {
+      throw new Error(`Expected ${name}=${expectedValue}, received ${actual}`);
+    }
+  }
+}
+NODE
+
+curl --fail --silent --show-error --get --cookie "$cookie_jar" \
+  --data-urlencode "boardId=$analytics_initial_board_id" \
+  "$base_url/app/analytics/metrics" > "$analytics_json"
+node - "$analytics_json" "$analytics_to_date" <<'NODE'
+const fs = require("fs");
+const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+if (
+  payload.period.to !== process.argv[3]
+  || payload.period.timezone !== "UTC"
+  || Number(payload.period.days) !== 30
+) {
+  throw new Error("The default Analytics period is not aligned with the current UTC date");
+}
+NODE
+
+lifecycle_today_date="$(date -u +%F)"
+curl --fail --silent --show-error --get --cookie "$cookie_jar" \
+  --data-urlencode "fromDate=$lifecycle_today_date" \
+  --data-urlencode "toDate=$lifecycle_today_date" \
+  --data-urlencode "boardId=$analytics_initial_board_id" \
+  "$base_url/app/analytics/metrics" > "$analytics_json"
+lifecycle_baseline_throughput="$(
+  node -e '
+    const fs=require("fs");
+    const payload=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));
+    const field=(value,name)=>value[
+      Object.keys(value).find((key)=>key.toLowerCase()===name.toLowerCase())
+    ];
+    process.stdout.write(String(Number(field(field(payload,"summary"),"throughput"))));
+  ' "$analytics_json"
+)"
+test "$lifecycle_baseline_throughput" -ge 0
+
+lifecycle_intermediate_title="CI lifecycle intermediate card"
+lifecycle_completed_title="CI lifecycle completed card"
+lifecycle_intermediate_status="$(
+  curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+    --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+    --request POST "$base_url/app/cards" \
+    --data-urlencode "csrfToken=$csrf_token" \
+    --data-urlencode "columnId=$target_column_id" \
+    --data-urlencode "title=$lifecycle_intermediate_title" \
+    --data-urlencode "description=Created directly in an intermediate lane"
+)"
+test "$lifecycle_intermediate_status" = "302"
+lifecycle_completed_status="$(
+  curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+    --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+    --request POST "$base_url/app/cards" \
+    --data-urlencode "csrfToken=$csrf_token" \
+    --data-urlencode "columnId=$last_column_id" \
+    --data-urlencode "title=$lifecycle_completed_title" \
+    --data-urlencode "description=Created directly in the final visible lane"
+)"
+test "$lifecycle_completed_status" = "302"
+
+curl --fail --silent --show-error --cookie "$cookie_jar" \
+  "$base_url/app?boardId=$analytics_initial_board_id" > "$app_html"
+lifecycle_intermediate_card_id="$(
+  sed -n '/data-card-title="CI&#x20;lifecycle&#x20;intermediate&#x20;card"/ s/.*data-card-id="\([^"]*\)".*/\1/p' \
+    "$app_html" | head -1
+)"
+lifecycle_completed_card_id="$(
+  sed -n '/data-card-title="CI&#x20;lifecycle&#x20;completed&#x20;card"/ s/.*data-card-id="\([^"]*\)".*/\1/p' \
+    "$app_html" | head -1
+)"
+test -n "$lifecycle_intermediate_card_id"
+test -n "$lifecycle_completed_card_id"
+
+if [[ "$analytics_exact_fixture" = "true" ]]; then
+  lifecycle_db_state="$(
+    printf '%s\n' \
+      "SELECT" \
+      "  COUNT(*) FILTER (" \
+      "    WHERE id=CAST(:'intermediate_card_id' AS UUID)" \
+      "      AND started_at IS NOT NULL" \
+      "      AND completed_at IS NULL" \
+      "  )," \
+      "  COUNT(*) FILTER (" \
+      "    WHERE id=CAST(:'completed_card_id' AS UUID)" \
+      "      AND started_at IS NOT NULL" \
+      "      AND completed_at IS NOT NULL" \
+      "  )" \
+      "FROM card" \
+      "WHERE id IN (" \
+      "  CAST(:'intermediate_card_id' AS UUID)," \
+      "  CAST(:'completed_card_id' AS UUID)" \
+      ");" \
+      | docker compose exec -T postgres psql \
+        --username "$analytics_db_user" \
+        --dbname "$analytics_db_name" \
+        --set ON_ERROR_STOP=1 \
+        --set intermediate_card_id="$lifecycle_intermediate_card_id" \
+        --set completed_card_id="$lifecycle_completed_card_id" \
+        --tuples-only --no-align --field-separator='|' \
+        --file=- \
+      | tr -d '\r[:space:]'
+  )"
+  test "$lifecycle_db_state" = "1|1"
+fi
+
+lifecycle_expected_throughput=$((lifecycle_baseline_throughput + 1))
+curl --fail --silent --show-error --get --cookie "$cookie_jar" \
+  --data-urlencode "fromDate=$lifecycle_today_date" \
+  --data-urlencode "toDate=$lifecycle_today_date" \
+  --data-urlencode "boardId=$analytics_initial_board_id" \
+  "$base_url/app/analytics/metrics" > "$analytics_json"
+node - "$analytics_json" "$lifecycle_intermediate_card_id" "$lifecycle_expected_throughput" <<'NODE'
+const fs = require("fs");
+const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+const intermediateCardId = process.argv[3];
+const expectedThroughput = Number(process.argv[4]);
+const field = (value, name) => {
+  const key = Object.keys(value).find((candidate) => candidate.toLowerCase() === name.toLowerCase());
+  if (!key) throw new Error(`Missing Analytics lifecycle field: ${name}`);
+  return value[key];
+};
+const summary = field(payload, "summary");
+const trend = field(payload, "throughputTrend");
+const agingCards = field(payload, "agingCards");
+const intermediate = agingCards.find(
+  (card) => String(field(card, "cardId")).toLowerCase() === intermediateCardId.toLowerCase()
+);
+
+if (Number(field(summary, "throughput")) !== expectedThroughput) {
+  throw new Error(
+    `Expected lifecycle throughput ${expectedThroughput}, received ${field(summary, "throughput")}`
+  );
+}
+if (
+  !Array.isArray(trend)
+  || trend.length !== 1
+  || Number(field(trend[0], "count")) !== expectedThroughput
+) {
+  throw new Error("Today's Analytics throughput bucket did not include the directly completed card");
+}
+if (!intermediate || field(intermediate, "hasStarted") !== true) {
+  throw new Error("The directly started intermediate card is missing from the aging snapshot");
+}
+NODE
+
+invalid_analytics_filter_status="$(
+  curl --silent --show-error --output "$analytics_json" --write-out '%{http_code}' \
+    --cookie "$cookie_jar" "$base_url/app/analytics/metrics?boardId=not-a-uuid"
+)"
+test "$invalid_analytics_filter_status" = "422"
+grep --quiet '"found":false' "$analytics_json"
+grep --quiet '"code":"invalid_filter"' "$analytics_json"
+missing_analytics_board_status="$(
+  curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+    --cookie "$cookie_jar" \
+    "$base_url/app/analytics/metrics?boardId=00000000-0000-0000-0000-000000000001"
+)"
+test "$missing_analytics_board_status" = "404"
+analytics_too_early="$(date -u -d '-366 days' +%F)"
+invalid_analytics_period_status="$(
+  curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+    --cookie "$cookie_jar" \
+    "$base_url/app/analytics/metrics?fromDate=$analytics_too_early&toDate=$analytics_to_date"
+)"
+test "$invalid_analytics_period_status" = "422"
+
 curl --fail --silent --show-error --cookie "$cookie_jar" \
   "$base_url/app/my-work?resetFilters=1" > "$my_work_html"
 grep 'data-my-work-card="'"$managed_card_id"'"' "$my_work_html" \
@@ -865,6 +1134,12 @@ hidden_complete_response="$(
     --data-urlencode "csrfToken=$hidden_card_csrf"
 )"
 printf '%s' "$hidden_complete_response" | grep --quiet '"success":true'
+curl --fail --silent --show-error --get --cookie "$cookie_jar" \
+  --data-urlencode "boardId=$managed_board_id" \
+  "$base_url/app/analytics/metrics" > "$analytics_json"
+assert_analytics_open_cards "$analytics_json" 3
+grep --quiet "CI Hidden Archive" "$analytics_json"
+grep --quiet "CI hidden archive card" "$analytics_json"
 
 curl --fail --silent --show-error --cookie "$cookie_jar" "$base_url/app/members" > "$members_html"
 invite_csrf_token="$(
@@ -1043,6 +1318,14 @@ if grep --quiet -E "CI hidden archive card|CI Hidden Archive|hidden-archive.txt"
   exit 1
 fi
 grep --quiet "Nothing assigned to you yet" "$my_work_html"
+curl --fail --silent --show-error --get --cookie "$member_cookie_jar" \
+  --data-urlencode "boardId=$managed_board_id" \
+  "$base_url/app/analytics/metrics" > "$analytics_json"
+assert_analytics_open_cards "$analytics_json" 2
+if grep --quiet -E "CI Hidden Archive|CI hidden archive card|hidden-archive.txt|$hidden_lane_id|$hidden_card_id" "$analytics_json"; then
+  echo "Analytics exposed a hidden lane or one of its resources to a member" >&2
+  exit 1
+fi
 
 curl --fail --silent --show-error --cookie "$cookie_jar" \
   "$base_url/app/boards/manage?boardId=$managed_board_id" > "$boards_html"
@@ -1070,6 +1353,12 @@ grep --quiet "hidden-archive.txt" "$card_html"
 curl --fail --silent --show-error --cookie "$member_cookie_jar" \
   "$base_url/app/my-work" > "$my_work_html"
 grep --quiet "CI hidden archive card" "$my_work_html"
+curl --fail --silent --show-error --get --cookie "$member_cookie_jar" \
+  --data-urlencode "boardId=$managed_board_id" \
+  "$base_url/app/analytics/metrics" > "$analytics_json"
+assert_analytics_open_cards "$analytics_json" 3
+grep --quiet "CI Hidden Archive" "$analytics_json"
+grep --quiet "CI hidden archive card" "$analytics_json"
 
 curl --fail --silent --show-error --output /dev/null \
   --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
@@ -1089,6 +1378,14 @@ curl --fail --silent --show-error --cookie "$member_cookie_jar" \
   "$base_url/app/my-work" > "$my_work_html"
 if grep --quiet -E "CI hidden archive card|CI Hidden Archive|hidden-archive.txt" "$my_work_html"; then
   echo "My Work retained a card after its lane was hidden again" >&2
+  exit 1
+fi
+curl --fail --silent --show-error --get --cookie "$member_cookie_jar" \
+  --data-urlencode "boardId=$managed_board_id" \
+  "$base_url/app/analytics/metrics" > "$analytics_json"
+assert_analytics_open_cards "$analytics_json" 2
+if grep --quiet -E "CI Hidden Archive|CI hidden archive card|hidden-archive.txt|$hidden_lane_id|$hidden_card_id" "$analytics_json"; then
+  echo "Analytics retained a card after its lane was hidden again" >&2
   exit 1
 fi
 

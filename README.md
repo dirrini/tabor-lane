@@ -30,7 +30,8 @@ through workflows with changes persisted in PostgreSQL.
 
 ## Run locally
 
-Requirements: Docker Desktop with Docker Compose.
+Requirements: Docker Desktop with Docker Compose. Running the functional smoke test
+locally also requires Git Bash and Node.js 18 or newer.
 
 ```powershell
 Copy-Item .env.example .env

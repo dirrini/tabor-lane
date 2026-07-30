@@ -123,12 +123,42 @@ component singleton {
 
 		var cardId = lCase( createUUID() );
 		queryExecute(
-			"INSERT INTO card (id, workspace_id, board_id, column_id, title, description, position)
-			 SELECT CAST(:cardId AS UUID), CAST(:workspaceId AS UUID), CAST(:boardId AS UUID),
-			        CAST(:columnId AS UUID), :title, :description,
-			        COALESCE(MAX(position), 0) + 1
-			 FROM card
-			 WHERE column_id = CAST(:columnId AS UUID) AND archived_at IS NULL",
+			"WITH visible_lifecycle AS (
+			     SELECT MIN(position) AS first_position,MAX(position) AS last_position
+			     FROM board_column
+			     WHERE board_id=CAST(:boardId AS UUID)
+			       AND is_archived=false
+			       AND is_hidden_from_members=false
+			 )
+			 INSERT INTO card (
+			     id,workspace_id,board_id,column_id,title,description,position,started_at,completed_at
+			 )
+			 SELECT CAST(:cardId AS UUID),CAST(:workspaceId AS UUID),CAST(:boardId AS UUID),
+			        CAST(:columnId AS UUID),:title,:description,
+			        (
+			            SELECT COALESCE(MAX(existing.position),0)+1
+			            FROM card existing
+			            WHERE existing.column_id=CAST(:columnId AS UUID)
+			              AND existing.archived_at IS NULL
+			        ),
+			        CASE
+			            WHEN target.is_hidden_from_members=false
+			             AND target.position=visible_lifecycle.first_position
+			            THEN NULL
+			            ELSE now()
+			        END,
+			        CASE
+			            WHEN target.is_hidden_from_members=false
+			             AND target.position<>visible_lifecycle.first_position
+			             AND target.position=visible_lifecycle.last_position
+			            THEN now()
+			            ELSE NULL
+			        END
+			 FROM board_column target
+			 CROSS JOIN visible_lifecycle
+			 WHERE target.id=CAST(:columnId AS UUID)
+			   AND target.board_id=CAST(:boardId AS UUID)
+			   AND target.is_archived=false",
 			{
 				cardId = cardId,
 				workspaceId = arguments.workspaceId,

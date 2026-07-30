@@ -1,6 +1,6 @@
 <cfoutput>
 <cfif prc.isHtmxRequest><title>#encodeForHTML( prc.pageTitle )#</title></cfif>
-    <section id="workspace-main" class="workspace-main" data-workspace-page="app" data-workspace data-board-id="#prc.workspaceBoard.found ? encodeForHTMLAttribute( prc.workspaceBoard.board.id ) : ''#" data-csrf-token="#encodeForHTMLAttribute( prc.cardCsrfToken )#" data-move-success="#encodeForHTMLAttribute( $r( 'app.card.moved' ) )#" data-move-error="#encodeForHTMLAttribute( $r( 'app.card.moveError' ) )#">
+    <section id="workspace-main" class="workspace-main" data-workspace-page="app" data-workspace data-board-id="#prc.workspaceBoard.found ? encodeForHTMLAttribute( prc.workspaceBoard.board.id ) : ''#" data-csrf-token="#encodeForHTMLAttribute( prc.cardCsrfToken )#" data-move-success="#encodeForHTMLAttribute( $r( 'app.card.moved' ) )#" data-move-error="#encodeForHTMLAttribute( $r( 'app.card.moveError' ) )#" data-layout-saved="#encodeForHTMLAttribute( $r( 'app.lane.layoutSaved' ) )#" data-layout-error="#encodeForHTMLAttribute( $r( 'app.lane.layoutError' ) )#">
         <cfif !prc.workspaceBoard.found>
             <div class="app-empty-state"><svg class="icon"><use href="/resources/icons.svg##board"></use></svg><h1>#$r( "app.empty.title" )#</h1><p>#$r( "app.empty.body" )#</p></div>
         <cfelse>
@@ -38,12 +38,17 @@
 
             <div class="workspace-board kanban-grid">
                 <cfloop array="#prc.workspaceBoard.columns#" item="column" index="columnIndex">
-                    <article class="kanban-column live-column" data-column-id="#encodeForHTMLAttribute( column.id )#">
+                    <article class="kanban-column live-column#column.is_collapsed ? ' is-collapsed' : ''#" data-column-id="#encodeForHTMLAttribute( column.id )#" data-lane-width="#column.width_px#" data-lane-collapsed="#column.is_collapsed ? 'true' : 'false'#" style="--lane-width:#column.width_px#px">
                         <header>
-                            <span class="column-dot dot-#encodeForHTMLAttribute(column.color)#"></span>
-                            <strong>#encodeForHTML( column.name )#</strong>
-                            <b data-card-count>#column.cards.len()#</b>
-                            <cfif !isNull( column.wip_limit )><em>WIP <span data-wip-count>#column.cards.len()#</span> / #column.wip_limit#</em></cfif>
+                            <span class="lane-heading">
+                                <span class="column-dot dot-#encodeForHTMLAttribute(column.color)#"></span>
+                                <strong>#encodeForHTML( column.name )#</strong>
+                                <b data-card-count>#column.cards.len()#</b>
+                                <cfif !isNull( column.wip_limit )><em>WIP <span data-wip-count>#column.cards.len()#</span> / #column.wip_limit#</em></cfif>
+                            </span>
+                            <button class="lane-collapse-button" type="button" data-lane-collapse aria-label="#encodeForHTMLAttribute( column.is_collapsed ? $r( 'app.lane.expand' ) : $r( 'app.lane.collapse' ) )#" title="#encodeForHTMLAttribute( column.is_collapsed ? $r( 'app.lane.expand' ) : $r( 'app.lane.collapse' ) )#" data-collapse-label="#encodeForHTMLAttribute( $r( 'app.lane.collapse' ) )#" data-expand-label="#encodeForHTMLAttribute( $r( 'app.lane.expand' ) )#">
+                                <svg class="icon lane-collapse-icon" aria-hidden="true"><use href="/resources/icons.svg###column.is_collapsed ? 'expand-horizontal' : 'collapse-horizontal'#"></use></svg>
+                            </button>
                         </header>
                         <div class="live-card-list" data-card-list>
                             <cfloop array="#column.cards#" item="card">
@@ -70,6 +75,7 @@
                             </cfloop>
                             <p class="column-empty" data-column-empty #column.cards.len() ? "hidden" : ""#>#$r( "app.column.empty" )#</p>
                         </div>
+                        <div class="lane-resize-handle" role="separator" aria-orientation="vertical" aria-label="#encodeForHTMLAttribute( $r( 'app.lane.resize' ) )#" title="#encodeForHTMLAttribute( $r( 'app.lane.resize' ) )#" tabindex="0" data-lane-resize></div>
                     </article>
                 </cfloop>
             </div>

@@ -12,6 +12,7 @@ component {
         index = "GET",
         createCard = "POST",
         moveCard = "POST",
+        updateLaneLayout = "POST",
         cardDetails = "GET",
         updateCard = "POST",
         addCardComment = "POST",
@@ -177,7 +178,8 @@ component {
             userId = prc.auth.id,
             workspaceId = prc.auth.workspaceId,
             cardId = rc.cardId ?: "",
-            columnId = rc.columnId ?: ""
+            columnId = rc.columnId ?: "",
+            beforeCardId = rc.beforeCardId ?: ""
         );
         var responseData = structNew( "ordered" );
         responseData[ "success" ] = result.success;
@@ -188,6 +190,33 @@ component {
             type = "json",
             data = responseData,
             statusCode = result.success ? 200 : ( result.code ?: "" ) == "wip_limit" ? 409 : 403
+        );
+    }
+
+    function updateLaneLayout( event, rc, prc ) {
+        if ( !csrfVerifyToken( rc.csrfToken ?: "", "card-write" ) ) {
+            event.renderData( type="json", data={ success=false, code="csrf" }, statusCode=403 );
+            return;
+        }
+        var result = boardService.saveLanePreference(
+            userId=prc.auth.id,
+            workspaceId=prc.auth.workspaceId,
+            columnId=rc.laneId ?: "",
+            widthPx=isNumeric( rc.widthPx ?: "" ) ? val( rc.widthPx ) : 280,
+            isCollapsed=( rc.isCollapsed ?: "false" ) == "true"
+        );
+        var responseData=structNew("ordered");
+        responseData["success"]=result.success;
+        if(result.success){
+            responseData["widthPx"]=result.widthPx;
+            responseData["isCollapsed"]=result.isCollapsed;
+        } else {
+            responseData["code"]=result.code ?: "forbidden";
+        }
+        event.renderData(
+            type="json",
+            data=responseData,
+            statusCode=result.success ? 200 : 403
         );
     }
 

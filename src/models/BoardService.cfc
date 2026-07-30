@@ -24,11 +24,16 @@ component singleton {
 		}
 
 		var columns = queryExecute(
-			"SELECT CAST(id AS TEXT) AS id, name, position, wip_limit, color
-			 FROM board_column
-			 WHERE board_id = CAST(:boardId AS UUID) AND is_archived=false
-			 ORDER BY position",
-			{ boardId = selectedBoard.id },
+			"SELECT CAST(bc.id AS TEXT) AS id, bc.name, bc.position, bc.wip_limit, bc.color,
+			        COALESCE(preference.width_px, 280) AS width_px,
+			        COALESCE(preference.is_collapsed, false) AS is_collapsed
+			 FROM board_column bc
+			 LEFT JOIN board_column_preference preference
+			   ON preference.column_id = bc.id
+			  AND preference.user_id = CAST(:userId AS UUID)
+			 WHERE bc.board_id = CAST(:boardId AS UUID) AND bc.is_archived=false
+			 ORDER BY bc.position",
+			{ boardId = selectedBoard.id, userId = arguments.userId },
 			{ returntype = "array" }
 		);
 		var cards = queryExecute(
@@ -114,7 +119,8 @@ component singleton {
 		required string userId,
 		required string workspaceId,
 		required string cardId,
-		required string columnId
+		required string columnId,
+		string beforeCardId = ""
 	){
 		var rows = queryExecute(
 			"SELECT CAST(c.column_id AS TEXT) AS from_column_id, CAST(c.board_id AS TEXT) AS board_id,
@@ -140,6 +146,28 @@ component singleton {
 		if ( rows[ 1 ].role == "viewer" ) {
 			return { success = false, code = "read_only" };
 		}
+		var cleanBeforeCardId = trim( arguments.beforeCardId );
+		if ( cleanBeforeCardId.len() ) {
+			var validBeforeCard = queryExecute(
+				"SELECT 1
+				 FROM card
+				 WHERE id = CAST(:beforeCardId AS UUID)
+				   AND id <> CAST(:cardId AS UUID)
+				   AND board_id = CAST(:boardId AS UUID)
+				   AND column_id = CAST(:columnId AS UUID)
+				   AND archived_at IS NULL",
+				{
+					beforeCardId = cleanBeforeCardId,
+					cardId = arguments.cardId,
+					boardId = rows[ 1 ].board_id,
+					columnId = arguments.columnId
+				},
+				{ returntype = "array" }
+			);
+			if ( !validBeforeCard.len() ) {
+				return { success = false, code = "invalid_position" };
+			}
+		}
 		var targetWip=rows[1].wip_limit ?: "";
 		if(toString(targetWip).len() && rows[1].from_column_id!=arguments.columnId){
 			var targetCount=queryExecute(
@@ -149,40 +177,149 @@ component singleton {
 			if(targetCount>=val(targetWip)) return {success=false,code="wip_limit"};
 		}
 
+		var columnChanged = rows[ 1 ].from_column_id != arguments.columnId;
 		transaction {
 			queryExecute(
-				"UPDATE card
-				 SET column_id = CAST(:columnId AS UUID),
-				     position = (SELECT COALESCE(MAX(position), 0) + 1 FROM card WHERE column_id = CAST(:columnId AS UUID) AND archived_at IS NULL),
-				     started_at = CASE WHEN started_at IS NULL THEN now() ELSE started_at END,
-				     completed_at = CASE
-				         WHEN (SELECT position FROM board_column WHERE id = CAST(:columnId AS UUID)) =
-				              (SELECT MAX(position) FROM board_column WHERE board_id = CAST(:boardId AS UUID))
-				         THEN now() ELSE NULL END,
-				     version = version + 1,
-				     updated_at = now()
-				 WHERE id = CAST(:cardId AS UUID)",
+				"SELECT id
+				 FROM card
+				 WHERE board_id = CAST(:boardId AS UUID)
+				   AND column_id IN (CAST(:fromColumnId AS UUID), CAST(:columnId AS UUID))
+				   AND archived_at IS NULL
+				 FOR UPDATE",
 				{
-					columnId = arguments.columnId,
 					boardId = rows[ 1 ].board_id,
-					cardId = arguments.cardId
-				}
-			);
-			queryExecute(
-				"INSERT INTO card_transition (workspace_id, card_id, from_column_id, to_column_id, actor_user_id)
-				 VALUES (CAST(:workspaceId AS UUID), CAST(:cardId AS UUID), CAST(:fromColumnId AS UUID),
-				         CAST(:columnId AS UUID), CAST(:userId AS UUID))",
-				{
-					workspaceId = arguments.workspaceId,
-					cardId = arguments.cardId,
 					fromColumnId = rows[ 1 ].from_column_id,
-					columnId = arguments.columnId,
-					userId = arguments.userId
+					columnId = arguments.columnId
 				}
 			);
+
+			if ( columnChanged ) {
+				queryExecute(
+					"UPDATE card
+					 SET column_id = CAST(:columnId AS UUID),
+					     started_at = COALESCE(started_at, now()),
+					     completed_at = CASE
+					         WHEN (SELECT position FROM board_column WHERE id = CAST(:columnId AS UUID)) =
+					              (SELECT MAX(position) FROM board_column WHERE board_id = CAST(:boardId AS UUID) AND is_archived=false)
+					         THEN now() ELSE NULL END,
+					     version = version + 1,
+					     updated_at = now()
+					 WHERE id = CAST(:cardId AS UUID)",
+					{
+						columnId = arguments.columnId,
+						boardId = rows[ 1 ].board_id,
+						cardId = arguments.cardId
+					}
+				);
+				queryExecute(
+					"INSERT INTO card_transition (workspace_id, card_id, from_column_id, to_column_id, actor_user_id)
+					 VALUES (CAST(:workspaceId AS UUID), CAST(:cardId AS UUID), CAST(:fromColumnId AS UUID),
+					         CAST(:columnId AS UUID), CAST(:userId AS UUID))",
+					{
+						workspaceId = arguments.workspaceId,
+						cardId = arguments.cardId,
+						fromColumnId = rows[ 1 ].from_column_id,
+						columnId = arguments.columnId,
+						userId = arguments.userId
+					}
+				);
+			} else {
+				queryExecute(
+					"UPDATE card SET version=version+1,updated_at=now() WHERE id=CAST(:cardId AS UUID)",
+					{ cardId=arguments.cardId }
+				);
+			}
+
+			var targetCards = queryExecute(
+				"SELECT CAST(id AS TEXT) AS id
+				 FROM card
+				 WHERE column_id=CAST(:columnId AS UUID)
+				   AND archived_at IS NULL
+				   AND id<>CAST(:cardId AS UUID)
+				 ORDER BY position,created_at,id",
+				{ columnId=arguments.columnId, cardId=arguments.cardId },
+				{ returntype="array" }
+			);
+			var targetCardIds = [];
+			for ( var targetCard in targetCards ) {
+				targetCardIds.append( targetCard.id );
+			}
+			var inserted = false;
+			if ( cleanBeforeCardId.len() ) {
+				for ( var targetIndex=1; targetIndex<=targetCardIds.len(); targetIndex++ ) {
+					if ( targetCardIds[ targetIndex ] == cleanBeforeCardId ) {
+						targetCardIds.insertAt( targetIndex, arguments.cardId );
+						inserted = true;
+						break;
+					}
+				}
+			}
+			if ( !inserted ) {
+				targetCardIds.append( arguments.cardId );
+			}
+			for ( var positionIndex=1; positionIndex<=targetCardIds.len(); positionIndex++ ) {
+				queryExecute(
+					"UPDATE card SET position=CAST(:position AS NUMERIC) WHERE id=CAST(:cardId AS UUID)",
+					{ position=positionIndex, cardId=targetCardIds[ positionIndex ] }
+				);
+			}
+
+			if ( columnChanged ) {
+				var sourceCards = queryExecute(
+					"SELECT CAST(id AS TEXT) AS id
+					 FROM card
+					 WHERE column_id=CAST(:columnId AS UUID) AND archived_at IS NULL
+					 ORDER BY position,created_at,id",
+					{ columnId=rows[ 1 ].from_column_id },
+					{ returntype="array" }
+				);
+				for ( var sourceIndex=1; sourceIndex<=sourceCards.len(); sourceIndex++ ) {
+					queryExecute(
+						"UPDATE card SET position=CAST(:position AS NUMERIC) WHERE id=CAST(:cardId AS UUID)",
+						{ position=sourceIndex, cardId=sourceCards[ sourceIndex ].id }
+					);
+				}
+			}
 		}
-		recordActivity( arguments.cardId, arguments.userId, "moved" );
+		recordActivity( arguments.cardId, arguments.userId, columnChanged ? "moved" : "reordered" );
 		return { success = true };
+	}
+
+	struct function saveLanePreference(
+		required string userId,
+		required string workspaceId,
+		required string columnId,
+		required numeric widthPx,
+		required boolean isCollapsed
+	){
+		var access = queryExecute(
+			"SELECT 1
+			 FROM board_column bc
+			 JOIN board b ON b.id=bc.board_id AND b.is_archived=false
+			 JOIN workspace_member wm ON wm.workspace_id=b.workspace_id
+			 WHERE bc.id=CAST(:columnId AS UUID)
+			   AND bc.is_archived=false
+			   AND b.workspace_id=CAST(:workspaceId AS UUID)
+			   AND wm.user_id=CAST(:userId AS UUID)",
+			{ columnId=arguments.columnId, workspaceId=arguments.workspaceId, userId=arguments.userId },
+			{ returntype="array" }
+		);
+		if ( !access.len() ) return { success=false, code="forbidden" };
+
+		var safeWidth = max( 240, min( 1200, round( arguments.widthPx ) ) );
+		queryExecute(
+			"INSERT INTO board_column_preference(user_id,column_id,width_px,is_collapsed)
+			 VALUES(CAST(:userId AS UUID),CAST(:columnId AS UUID),CAST(:widthPx AS INTEGER),CAST(:isCollapsed AS BOOLEAN))
+			 ON CONFLICT(user_id,column_id) DO UPDATE
+			 SET width_px=EXCLUDED.width_px,is_collapsed=EXCLUDED.is_collapsed,updated_at=now()",
+			{
+				userId=arguments.userId,
+				columnId=arguments.columnId,
+				widthPx=safeWidth,
+				isCollapsed=arguments.isCollapsed
+			}
+		);
+		return { success=true, widthPx=safeWidth, isCollapsed=arguments.isCollapsed };
 	}
 
 	struct function getCardDetails( required string userId, required string workspaceId, required string cardId ){

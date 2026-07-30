@@ -31,6 +31,7 @@ component {
         post( "/app/cards/:cardId/comments" ).to( "App.addCardComment" );
         post( "/app/cards/:cardId/archive" ).to( "App.archiveCard" );
         post( "/app/cards/:cardId/move" ).to( "App.moveCard" );
+        post( "/app/lanes/:laneId/layout" ).to( "App.updateLaneLayout" );
         post( "/app/cards/:cardId" ).to( "App.updateCard" );
         get( "/app/cards/:cardId" ).to( "App.cardDetails" );
         post( "/app/cards" ).to( "App.createCard" );

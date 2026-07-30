@@ -430,6 +430,47 @@ move_safety_card_response="$(
     --data-urlencode "columnId=$target_lane_id"
 )"
 printf '%s' "$move_safety_card_response" | grep --quiet '"success":true'
+
+reorder_card_response="$(
+  curl --fail --silent --show-error \
+    --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+    --request POST "$base_url/app/cards/$lane_safety_card_id/move" \
+    --data-urlencode "csrfToken=$board_card_csrf" \
+    --data-urlencode "columnId=$target_lane_id" \
+    --data-urlencode "beforeCardId=$wip_candidate_id"
+)"
+printf '%s' "$reorder_card_response" | grep --quiet '"success":true'
+curl --fail --silent --show-error --cookie "$cookie_jar" \
+  "$base_url/app?boardId=$managed_board_id" > "$app_html"
+safety_card_line="$(grep -n 'data-card-title="CI&#x20;lane&#x20;safety&#x20;card"' "$app_html" | head -1 | cut -d: -f1)"
+candidate_card_line="$(grep -n 'data-card-title="CI&#x20;WIP&#x20;candidate"' "$app_html" | head -1 | cut -d: -f1)"
+if [[ -z "$safety_card_line" || -z "$candidate_card_line" || "$safety_card_line" -ge "$candidate_card_line" ]]; then
+  echo "Same-lane card ordering was not persisted" >&2
+  exit 1
+fi
+
+lane_layout_response="$(
+  curl --fail --silent --show-error \
+    --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+    --request POST "$base_url/app/lanes/$target_lane_id/layout" \
+    --data-urlencode "csrfToken=$board_card_csrf" \
+    --data-urlencode "widthPx=620" \
+    --data-urlencode "isCollapsed=true"
+)"
+printf '%s' "$lane_layout_response" | grep --quiet '"success":true'
+printf '%s' "$lane_layout_response" | grep --quiet '"widthPx":620'
+curl --fail --silent --show-error --cookie "$cookie_jar" \
+  "$base_url/app?boardId=$managed_board_id" > "$app_html"
+grep 'data-column-id="'"$target_lane_id"'"' "$app_html" \
+  | grep --quiet 'is-collapsed.*data-lane-width="620".*data-lane-collapsed="true"'
+
+curl --fail --silent --show-error --output /dev/null \
+  --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+  --request POST "$base_url/app/lanes/$target_lane_id/layout" \
+  --data-urlencode "csrfToken=$board_card_csrf" \
+  --data-urlencode "widthPx=620" \
+  --data-urlencode "isCollapsed=false"
+
 curl --fail --silent --show-error --output /dev/null \
   --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
   --request POST "$base_url/app/boards/$managed_board_id/lanes/$qa_lane_id/delete" \

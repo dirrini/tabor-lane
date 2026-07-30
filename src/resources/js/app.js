@@ -116,6 +116,8 @@
     const cardFormCancel = workspace.querySelector("[data-card-form-cancel]");
     const toast = workspace.querySelector("[data-board-toast]");
     let draggedCard = null;
+    let dragOrigin = null;
+    let dropAttempted = false;
 
     const toggleCardForm = (open) => {
       if (!cardForm) return;
@@ -145,38 +147,91 @@
       });
     };
 
+    const restoreDraggedCard = () => {
+      if (!dragOrigin?.card || !dragOrigin.list?.isConnected) return;
+      const nextSibling = dragOrigin.nextSibling?.isConnected ? dragOrigin.nextSibling : null;
+      dragOrigin.list.insertBefore(dragOrigin.card, nextSibling);
+      updateColumnState();
+    };
+
+    const cardBeforePointer = (list, clientX, clientY) => {
+      const cards = [...list.querySelectorAll("[data-card-id]:not(.dragging)")];
+      if (!cards.length) return null;
+      const rows = [];
+      cards.forEach((card) => {
+        const rect = card.getBoundingClientRect();
+        let row = rows.find((candidate) => Math.abs(candidate.top - rect.top) < Math.min(rect.height, 24));
+        if (!row) {
+          row = { top: rect.top, bottom: rect.bottom, cards: [] };
+          rows.push(row);
+        }
+        row.bottom = Math.max(row.bottom, rect.bottom);
+        row.cards.push({ card, rect });
+      });
+      rows.sort((first, second) => first.top - second.top);
+      const targetRowIndex = rows.findIndex((row) => clientY < row.bottom);
+      const resolvedRowIndex = targetRowIndex === -1 ? rows.length - 1 : targetRowIndex;
+      const targetRow = rows[resolvedRowIndex];
+      if (clientY > targetRow.bottom) return null;
+      targetRow.cards.sort((first, second) => first.rect.left - second.rect.left);
+      return targetRow.cards.find(({ rect }) => clientX < rect.left + rect.width / 2)?.card
+        || rows[resolvedRowIndex + 1]?.cards
+          .sort((first, second) => first.rect.left - second.rect.left)[0]?.card
+        || null;
+    };
+
     workspace.querySelectorAll("[data-card-id]").forEach((card) => {
-      card.addEventListener("dragstart", () => {
+      card.addEventListener("dragstart", (event) => {
         draggedCard = card;
+        dragOrigin = {
+          card,
+          list: card.parentElement,
+          nextSibling: card.nextElementSibling,
+        };
+        dropAttempted = false;
         card.classList.add("dragging");
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("text/plain", card.dataset.cardId);
       });
       card.addEventListener("dragend", () => {
         card.classList.remove("dragging");
         workspace.querySelectorAll(".drag-over").forEach((column) => column.classList.remove("drag-over"));
+        if (!dropAttempted) restoreDraggedCard();
         draggedCard = null;
       });
     });
 
     workspace.querySelectorAll("[data-column-id]").forEach((column) => {
       column.addEventListener("dragover", (event) => {
+        if (!draggedCard || column.classList.contains("is-collapsed")) return;
         event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
         column.classList.add("drag-over");
+        const targetList = column.querySelector("[data-card-list]");
+        const beforeCard = cardBeforePointer(targetList, event.clientX, event.clientY);
+        targetList.insertBefore(draggedCard, beforeCard);
+        updateColumnState();
       });
-      column.addEventListener("dragleave", () => column.classList.remove("drag-over"));
+      column.addEventListener("dragleave", (event) => {
+        if (!column.contains(event.relatedTarget)) column.classList.remove("drag-over");
+      });
       column.addEventListener("drop", async (event) => {
+        if (!draggedCard || column.classList.contains("is-collapsed")) return;
         event.preventDefault();
+        dropAttempted = true;
         column.classList.remove("drag-over");
-        if (!draggedCard || draggedCard.closest("[data-column-id]") === column) return;
 
         const card = draggedCard;
-        const previousList = card.parentElement;
         const targetList = column.querySelector("[data-card-list]");
-        targetList.appendChild(card);
+        const nextCard = card.nextElementSibling?.matches("[data-card-id]")
+          ? card.nextElementSibling
+          : null;
         updateColumnState();
 
         const payload = new URLSearchParams({
           csrfToken: workspace.dataset.csrfToken,
           columnId: column.dataset.columnId,
+          beforeCardId: nextCard?.dataset.cardId || "",
         });
         try {
           const response = await fetch(`/app/cards/${encodeURIComponent(card.dataset.cardId)}/move`, {
@@ -189,10 +244,103 @@
           if (!response.ok || !moveSucceeded) throw new Error("Move rejected");
           showToast(workspace.dataset.moveSuccess);
         } catch (error) {
-          previousList.appendChild(card);
-          updateColumnState();
+          restoreDraggedCard();
           showToast(workspace.dataset.moveError);
+        } finally {
+          card.classList.remove("dragging");
+          dragOrigin = null;
+          dropAttempted = false;
         }
+      });
+    });
+
+    const saveLaneLayout = async (column) => {
+      const payload = new URLSearchParams({
+        csrfToken: workspace.dataset.csrfToken,
+        widthPx: column.dataset.laneWidth,
+        isCollapsed: column.dataset.laneCollapsed,
+      });
+      try {
+        const response = await fetch(`/app/lanes/${encodeURIComponent(column.dataset.columnId)}/layout`, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" },
+          body: payload,
+        });
+        const result = await response.json();
+        if (!response.ok || !(result.success ?? result.SUCCESS)) throw new Error("Layout rejected");
+        const savedWidth = result.widthPx ?? result.WIDTHPX;
+        column.dataset.laneWidth = String(savedWidth);
+        column.style.setProperty("--lane-width", `${savedWidth}px`);
+        showToast(workspace.dataset.layoutSaved);
+      } catch (error) {
+        showToast(workspace.dataset.layoutError);
+      }
+    };
+
+    workspace.querySelectorAll("[data-column-id]").forEach((column) => {
+      const collapseButton = column.querySelector("[data-lane-collapse]");
+      const resizeHandle = column.querySelector("[data-lane-resize]");
+      collapseButton?.addEventListener("click", () => {
+        const isCollapsed = column.dataset.laneCollapsed !== "true";
+        column.dataset.laneCollapsed = String(isCollapsed);
+        column.classList.toggle("is-collapsed", isCollapsed);
+        const label = isCollapsed
+          ? collapseButton.dataset.expandLabel
+          : collapseButton.dataset.collapseLabel;
+        collapseButton.setAttribute("aria-label", label);
+        collapseButton.title = label;
+        const iconUse = collapseButton.querySelector("use");
+        iconUse?.setAttribute(
+          "href",
+          `/resources/icons.svg#${isCollapsed ? "expand-horizontal" : "collapse-horizontal"}`,
+        );
+        saveLaneLayout(column);
+      });
+
+      let resizeState = null;
+      const finishResize = (event) => {
+        if (!resizeState) return;
+        resizeHandle.releasePointerCapture?.(event.pointerId);
+        resizeHandle.removeEventListener("pointermove", resizeLane);
+        resizeHandle.removeEventListener("pointerup", finishResize);
+        resizeHandle.removeEventListener("pointercancel", cancelResize);
+        column.classList.remove("is-resizing");
+        resizeState = null;
+        saveLaneLayout(column);
+      };
+      const cancelResize = (event) => {
+        if (!resizeState) return;
+        column.dataset.laneWidth = String(resizeState.startWidth);
+        column.style.setProperty("--lane-width", `${resizeState.startWidth}px`);
+        finishResize(event);
+      };
+      const resizeLane = (event) => {
+        if (!resizeState) return;
+        const width = Math.max(240, Math.min(1200, resizeState.startWidth + event.clientX - resizeState.startX));
+        column.dataset.laneWidth = String(Math.round(width));
+        column.style.setProperty("--lane-width", `${Math.round(width)}px`);
+      };
+      resizeHandle?.addEventListener("pointerdown", (event) => {
+        if (column.classList.contains("is-collapsed") || event.button !== 0) return;
+        event.preventDefault();
+        resizeState = {
+          startX: event.clientX,
+          startWidth: Number(column.dataset.laneWidth) || column.getBoundingClientRect().width,
+        };
+        column.classList.add("is-resizing");
+        resizeHandle.setPointerCapture?.(event.pointerId);
+        resizeHandle.addEventListener("pointermove", resizeLane);
+        resizeHandle.addEventListener("pointerup", finishResize);
+        resizeHandle.addEventListener("pointercancel", cancelResize);
+      });
+      resizeHandle?.addEventListener("keydown", (event) => {
+        if (column.classList.contains("is-collapsed") || !["ArrowLeft", "ArrowRight"].includes(event.key)) return;
+        event.preventDefault();
+        const increment = event.key === "ArrowRight" ? 40 : -40;
+        const width = Math.max(240, Math.min(1200, (Number(column.dataset.laneWidth) || 280) + increment));
+        column.dataset.laneWidth = String(width);
+        column.style.setProperty("--lane-width", `${width}px`);
+        saveLaneLayout(column);
       });
     });
   };

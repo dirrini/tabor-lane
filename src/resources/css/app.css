@@ -208,7 +208,7 @@ button { color: inherit; }
 .demo-card h3 { margin: 0; font-size: 11px; line-height: 1.45; }
 .demo-card p { margin: 7px 0 0; color: #999f99; font-size: 8px; }
 .card-meta { display: flex; align-items: center; justify-content: space-between; margin-top: 16px; color: #989e98; font-size: 8px; }
-.card-meta .avatar { width: 23px; height: 23px; }
+.card-meta .avatar { width: 23px; height: 23px; flex: 0 0 23px; aspect-ratio: 1; border-radius: 50%; }
 .blocked { display: inline-block; margin-bottom: 8px; padding: 3px 6px; border-radius: 4px; color: #a45353; background: #f4e3e0; font-size: 7px; font-weight: 800; text-transform: uppercase; }
 .tiny-avatars { display: flex; }.tiny-avatars .avatar + .avatar { margin-left: -7px; }
 .done-card { display: flex; gap: 9px; opacity: .75; }

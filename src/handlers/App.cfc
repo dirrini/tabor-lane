@@ -29,7 +29,19 @@ component {
         if ( !session.auth.emailVerified ) {
             relocate( uri = "/check-email" );
         }
+        var workspaceContext = authService.resolveWorkspaceContext(
+            session.auth.id,
+            session.auth.workspaceId ?: ""
+        );
+        if ( !workspaceContext.found ) {
+            sessionInvalidate();
+            relocate( uri = "/login" );
+        }
+        session.auth.workspaceId = workspaceContext.workspaceId;
+        session.auth.workspaceName = workspaceContext.workspaceName;
+        session.auth.role = workspaceContext.role;
         prc.auth = session.auth;
+        prc.workspaceSwitchCsrfToken = csrfGenerateToken( "workspace-select" );
     }
 
     function members( event, rc, prc ) {

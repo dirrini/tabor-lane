@@ -13,11 +13,25 @@ component singleton {
         required string objectKey,
         numeric expiresIn = 300
     ){
+        return presignAtEndpoint(
+            arguments.method,
+            arguments.objectKey,
+            arguments.expiresIn,
+            variables.publicEndpoint
+        );
+    }
+
+    private string function presignAtEndpoint(
+        required string method,
+        required string objectKey,
+        required numeric expiresIn,
+        required string endpoint
+    ){
         var nowUtc = dateConvert( "local2utc", now() );
         var amzDate = dateTimeFormat( nowUtc, "yyyymmdd'T'HHnnss'Z'" );
         var dateStamp = dateFormat( nowUtc, "yyyymmdd" );
         var scope = "#dateStamp#/#variables.region#/s3/aws4_request";
-        var endpointUri = createObject( "java", "java.net.URI" ).init( variables.publicEndpoint );
+        var endpointUri = createObject( "java", "java.net.URI" ).init( arguments.endpoint );
         var host = endpointUri.getHost();
         if ( endpointUri.getPort() > 0 ) host &= ":#endpointUri.getPort()#";
         var canonicalUri = "/#awsEncode( variables.bucket )#/#encodePath( arguments.objectKey )#";
@@ -52,15 +66,15 @@ component singleton {
             )
         );
         var signature = lCase( hmac( stringToSign, signingKey, "HmacSHA256", "utf-8" ) );
-        return variables.publicEndpoint & canonicalUri & "?" & canonicalQuery & "&X-Amz-Signature=" & signature;
+        return arguments.endpoint & canonicalUri & "?" & canonicalQuery & "&X-Amz-Signature=" & signature;
     }
 
     struct function inspect( required string objectKey ){
         var response = {};
-        var signedUrl=presign( "HEAD", arguments.objectKey );
-        cfhttp( method="HEAD", url=internalUrl(signedUrl), result="response", timeout=15 ){
-            cfhttpparam(type="header",name="Host",value=publicHost());
-        }
+        var signedUrl=presignAtEndpoint(
+            "HEAD",arguments.objectKey,60,variables.endpoint
+        );
+        cfhttp( method="HEAD", url=signedUrl, result="response", timeout=15 );
         return {
             success = left( response.statusCode ?: "", 1 ) == "2",
             statusCode = response.statusCode ?: "",
@@ -69,12 +83,96 @@ component singleton {
         };
     }
 
+    struct function readObject(
+        required string objectKey,
+        numeric maxBytes = 1048576
+    ){
+        var response = {};
+        var signedUrl = presignAtEndpoint(
+            "GET",arguments.objectKey,60,variables.endpoint
+        );
+        var byteLimit = max( 1, int( arguments.maxBytes ) );
+        cfhttp(
+            method="GET",
+            url=signedUrl,
+            result="response",
+            timeout=15,
+            getAsBinary="yes"
+        ){
+            // Request one byte beyond the limit so oversized objects are
+            // detected without downloading their full contents.
+            cfhttpparam( type="header", name="Range", value="bytes=0-#byteLimit#" );
+        }
+        var hasBinaryContent = isBinary( response.fileContent ?: "" );
+        var responseBytes = hasBinaryContent
+            ? createObject( "java", "java.lang.reflect.Array" ).getLength( response.fileContent )
+            : 0;
+        var tooLarge = responseBytes > byteLimit;
+        var success = left( response.statusCode ?: "", 1 ) == "2"
+            && hasBinaryContent
+            && !tooLarge;
+        var result = {
+            success = success,
+            statusCode = response.statusCode ?: "",
+            contentType = response.responseHeader[ "Content-Type" ] ?: "application/octet-stream",
+            size = responseBytes,
+            tooLarge = tooLarge
+        };
+        if ( success ) result.data = response.fileContent;
+        return result;
+    }
+
+    struct function writeObject(
+        required string objectKey,
+        required binary data,
+        string contentType = "application/octet-stream"
+    ){
+        var signedUrl = presignAtEndpoint(
+            "PUT",arguments.objectKey,60,variables.endpoint
+        );
+        var connection = "";
+        var output = "";
+        var statusCode = 0;
+        var errorMessage = "";
+        try {
+            connection = createObject( "java", "java.net.URL" )
+                .init( signedUrl )
+                .openConnection();
+            connection.setConnectTimeout( 15000 );
+            connection.setReadTimeout( 15000 );
+            connection.setDoOutput( true );
+            connection.setRequestMethod( "PUT" );
+            connection.setRequestProperty( "Content-Type", arguments.contentType );
+            var byteLength = createObject(
+                "java",
+                "java.lang.reflect.Array"
+            ).getLength( arguments.data );
+            connection.setFixedLengthStreamingMode( javacast( "int", byteLength ) );
+            output = connection.getOutputStream();
+            output.write( arguments.data, 0, byteLength );
+            output.flush();
+            statusCode = connection.getResponseCode();
+        } catch ( any exception ) {
+            statusCode = 0;
+            errorMessage = exception.message & " " & ( exception.detail ?: "" );
+        } finally {
+            if ( isObject( output ) ) output.close();
+            if ( isObject( connection ) ) connection.disconnect();
+        }
+        var result = {
+            success = statusCode >= 200 && statusCode < 300,
+            statusCode = statusCode
+        };
+        if ( errorMessage.len() ) result.error = errorMessage;
+        return result;
+    }
+
     boolean function delete( required string objectKey ){
         var response = {};
-        var signedUrl=presign( "DELETE", arguments.objectKey );
-        cfhttp( method="DELETE", url=internalUrl(signedUrl), result="response", timeout=15 ){
-            cfhttpparam(type="header",name="Host",value=publicHost());
-        }
+        var signedUrl=presignAtEndpoint(
+            "DELETE",arguments.objectKey,60,variables.endpoint
+        );
+        cfhttp( method="DELETE", url=signedUrl, result="response", timeout=15 );
         return left( response.statusCode ?: "", 1 ) == "2";
     }
 
@@ -97,12 +195,4 @@ component singleton {
         return replace( encoded, "*", "%2A", "all" );
     }
 
-    private string function internalUrl(required string signedUrl){
-        return variables.endpoint & removeChars(arguments.signedUrl,1,variables.publicEndpoint.len());
-    }
-
-    private string function publicHost(){
-        var uri=createObject("java","java.net.URI").init(variables.publicEndpoint);
-        return uri.getPort()>0?"#uri.getHost()#:#uri.getPort()#":uri.getHost();
-    }
 }

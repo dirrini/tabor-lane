@@ -5,6 +5,7 @@ component {
     property name="notificationService" inject="NotificationService";
     property name="rateLimitService" inject="RateLimitService";
     property name="workspaceViewService" inject="WorkspaceViewService";
+    property name="avatarService" inject="AvatarService";
 
     this.allowedMethods = {
         index = "GET",
@@ -16,7 +17,19 @@ component {
         if ( !structKeyExists( session, "auth" ) ) relocate( uri = "/login" );
         session.auth.emailVerified = authService.isEmailVerified( session.auth.id );
         if ( !session.auth.emailVerified ) relocate( uri = "/check-email" );
+        var workspaceContext = authService.resolveWorkspaceContext(
+            session.auth.id,
+            session.auth.workspaceId ?: ""
+        );
+        if ( !workspaceContext.found ) {
+            sessionInvalidate();
+            relocate( uri = "/login" );
+        }
+        session.auth.workspaceId = workspaceContext.workspaceId;
+        session.auth.workspaceName = workspaceContext.workspaceName;
+        session.auth.role = workspaceContext.role;
         prc.auth = session.auth;
+        prc.workspaceSwitchCsrfToken = csrfGenerateToken( "workspace-select" );
     }
 
     function index( event, rc, prc ) {
@@ -39,13 +52,16 @@ component {
             prc.billing.memberCount ?: 1
         );
         prc.profileCsrfToken = csrfGenerateToken( "profile" );
+        prc.avatarCsrfToken = csrfGenerateToken( "profile-avatar" );
         prc.passwordCsrfToken = csrfGenerateToken( "profile-password" );
         prc.billingCsrfToken = csrfGenerateToken( "billing" );
         prc.billingPortalCsrfToken = csrfGenerateToken( "billing-portal" );
         prc.logoutCsrfToken = csrfGenerateToken( "logout" );
         prc.checkoutNotice = rc.checkout ?: "";
-        prc.notice = rc.updated ?: rc.passwordChanged ?: "";
+        prc.notice = rc.updated ?: rc.passwordChanged ?: rc.avatarUpdated ?: "";
         prc.error = rc.error ?: "";
+        prc.avatar = avatarService.getState( prc.auth.id );
+        prc.avatarInitials = avatarService.initials( prc.auth.displayName );
         workspaceViewService.render( event, prc, "app/profile" );
     }
 

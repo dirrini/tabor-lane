@@ -18,9 +18,12 @@ member_cookie_jar="$(mktemp)"
 member_signup_html="$(mktemp)"
 attachment_payload="$(mktemp)"
 attachment_download="$(mktemp)"
+avatar_payload="$(mktemp)"
+avatar_before="$(mktemp)"
+avatar_after="$(mktemp)"
 boards_html="$(mktemp)"
 my_work_html="$(mktemp)"
-trap 'rm -f "$cookie_jar" "$signup_html" "$app_html" "$check_email_html" "$members_html" "$billing_html" "$profile_html" "$card_html" "$partial_html" "$history_restore_html" "$invitation_html" "$member_cookie_jar" "$member_signup_html" "$attachment_payload" "$attachment_download" "$boards_html" "$my_work_html"' EXIT
+trap 'rm -f "$cookie_jar" "$signup_html" "$app_html" "$check_email_html" "$members_html" "$billing_html" "$profile_html" "$card_html" "$partial_html" "$history_restore_html" "$invitation_html" "$member_cookie_jar" "$member_signup_html" "$attachment_payload" "$attachment_download" "$avatar_payload" "$avatar_before" "$avatar_after" "$boards_html" "$my_work_html"' EXIT
 
 curl --fail --silent --show-error --cookie-jar "$cookie_jar" "$base_url/signup" > "$signup_html"
 csrf_token="$(sed -n 's/.*name="csrfToken" value="\([^"]*\)".*/\1/p' "$signup_html" | head -1)"
@@ -60,6 +63,16 @@ grep --quiet "data-wip-count" "$app_html"
 grep --quiet "data-workspace-menu-toggle" "$app_html"
 grep --quiet '<!doctype html>' "$app_html"
 grep --quiet 'class="workspace-sidebar"' "$app_html"
+grep --quiet 'class="workspace-picker"' "$app_html"
+grep --quiet 'class="user-avatar account-avatar"' "$app_html"
+if grep --quiet 'workspace-picker-menu' "$app_html"; then
+  echo "Single-workspace account unexpectedly displayed a workspace dropdown" >&2
+  exit 1
+fi
+if sed -n '/<header class="workspace-header">/,/<\/header>/p' "$app_html" | grep --quiet 'account-avatar'; then
+  echo "Boards header unexpectedly displayed the current user avatar" >&2
+  exit 1
+fi
 
 for partial_path in app app/my-work app/members app/profile app/billing app/boards/manage; do
   curl --fail --silent --show-error --cookie "$cookie_jar" \
@@ -91,6 +104,120 @@ grep --quiet "Workspace plan" "$profile_html"
 grep --quiet "My work" "$profile_html"
 grep --quiet "Automations" "$profile_html"
 grep --quiet "data-workspace-menu-close" "$profile_html"
+grep --quiet 'id="profile-avatar"' "$profile_html"
+grep --quiet 'data-avatar-manager' "$profile_html"
+grep --quiet 'data-avatar-stage' "$profile_html"
+grep --quiet 'accept="image/jpeg,image/png,image/webp"' "$profile_html"
+avatar_csrf="$(
+  sed -n 's/.*data-avatar-csrf-token="\([^"]*\)".*/\1/p' "$profile_html" | head -1
+)"
+test -n "$avatar_csrf"
+invalid_avatar_csrf_status="$(
+  curl --silent --show-error --output "$partial_html" --write-out '%{http_code}' \
+    --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+    --request POST "$base_url/app/profile/avatar/presign" \
+    --data-urlencode "csrfToken=invalid" \
+    --data-urlencode "filename=avatar.png" \
+    --data-urlencode "sourceContentType=image/png" \
+    --data-urlencode "sourceSize=1024" \
+    --data-urlencode "outputSize=1024"
+)"
+test "$invalid_avatar_csrf_status" = "403"
+invalid_avatar_type_status="$(
+  curl --silent --show-error --output "$partial_html" --write-out '%{http_code}' \
+    --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+    --request POST "$base_url/app/profile/avatar/presign" \
+    --data-urlencode "csrfToken=$avatar_csrf" \
+    --data-urlencode "filename=avatar.svg" \
+    --data-urlencode "sourceContentType=image/svg+xml" \
+    --data-urlencode "sourceSize=1024" \
+    --data-urlencode "outputSize=1024"
+)"
+test "$invalid_avatar_type_status" = "422"
+grep --quiet '"code":"invalid_type"' "$partial_html"
+large_avatar_status="$(
+  curl --silent --show-error --output "$partial_html" --write-out '%{http_code}' \
+    --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+    --request POST "$base_url/app/profile/avatar/presign" \
+    --data-urlencode "csrfToken=$avatar_csrf" \
+    --data-urlencode "filename=avatar.png" \
+    --data-urlencode "sourceContentType=image/png" \
+    --data-urlencode "sourceSize=5242881" \
+    --data-urlencode "outputSize=1024"
+)"
+test "$large_avatar_status" = "422"
+grep --quiet '"code":"source_too_large"' "$partial_html"
+base64 --decode scripts/fixtures/avatar-512.jpg.gz.b64 | gzip --decompress > "$avatar_payload"
+avatar_size="$(wc -c < "$avatar_payload" | tr -d ' ')"
+test "$avatar_size" = "4724"
+avatar_presign="$(
+  curl --fail --silent --show-error \
+    --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+    --request POST "$base_url/app/profile/avatar/presign" \
+    --data-urlencode "csrfToken=$avatar_csrf" \
+    --data-urlencode "filename=ci-avatar.jpg" \
+    --data-urlencode "sourceContentType=image/jpeg" \
+    --data-urlencode "sourceSize=$avatar_size" \
+    --data-urlencode "outputSize=$avatar_size"
+)"
+avatar_id="$(printf '%s' "$avatar_presign" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')"
+avatar_upload_url="$(printf '%s' "$avatar_presign" | sed -n 's/.*"uploadUrl":"\([^"]*\)".*/\1/p')"
+test -n "$avatar_id"
+test -n "$avatar_upload_url"
+avatar_upload_status="$(
+  curl --silent --show-error --output "$partial_html" --write-out '%{http_code}' \
+    --request PUT --header "Content-Type: image/jpeg" \
+    --upload-file "$avatar_payload" "$avatar_upload_url"
+)"
+test "$avatar_upload_status" = "200"
+avatar_complete="$(
+  curl --silent --show-error \
+    --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+    --request POST "$base_url/app/profile/avatar/$avatar_id/complete" \
+    --data-urlencode "csrfToken=$avatar_csrf"
+)"
+if ! printf '%s' "$avatar_complete" | grep --quiet '"success":true'; then
+  echo "Unexpected avatar completion response: $avatar_complete" >&2
+  exit 1
+fi
+avatar_path="$(printf '%s' "$avatar_complete" | sed -n 's/.*"url":"\([^"]*\)".*/\1/p')"
+test -n "$avatar_path"
+curl --fail --silent --show-error --location --cookie "$cookie_jar" \
+  "$base_url$avatar_path" > "$avatar_before"
+test -s "$avatar_before"
+
+second_complete_status="$(
+  curl --silent --show-error --output "$partial_html" --write-out '%{http_code}' \
+    --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+    --request POST "$base_url/app/profile/avatar/$avatar_id/complete" \
+    --data-urlencode "csrfToken=$avatar_csrf"
+)"
+test "$second_complete_status" = "200"
+grep --quiet '"success":true' "$partial_html"
+printf 'not a validated jpeg\n' > "$avatar_after"
+reuse_upload_status="$(
+  curl --silent --show-error --output "$partial_html" --write-out '%{http_code}' \
+    --request PUT --header "Content-Type: image/jpeg" \
+    --upload-file "$avatar_after" "$avatar_upload_url"
+)"
+test "$reuse_upload_status" = "200"
+curl --fail --silent --show-error --location --cookie "$cookie_jar" \
+  "$base_url$avatar_path" > "$avatar_after"
+cmp "$avatar_before" "$avatar_after"
+
+avatar_remove_status="$(
+  curl --silent --show-error --output "$partial_html" --write-out '%{http_code}' \
+    --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+    --request POST "$base_url/app/profile/avatar/remove" \
+    --data-urlencode "csrfToken=$avatar_csrf"
+)"
+test "$avatar_remove_status" = "200"
+grep --quiet '"success":true' "$partial_html"
+removed_avatar_status="$(
+  curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+    --cookie "$cookie_jar" "$base_url$avatar_path"
+)"
+test "$removed_avatar_status" = "404"
 profile_csrf="$(
   sed -n '/action="\/app\/profile\/details"/,/<\/form>/p' "$profile_html" \
     | sed -n 's/.*name="csrfToken" value="\([^"]*\)".*/\1/p' \
@@ -210,6 +337,11 @@ grep --quiet '<!doctype html>' "$my_work_html"
 grep --quiet 'class="workspace-sidebar"' "$my_work_html"
 grep --quiet 'data-workspace-page="myWork"' "$my_work_html"
 grep --quiet 'href="/app/my-work" class="active"' "$my_work_html"
+grep --quiet '<span data-avatar-initials>CU</span>' "$my_work_html"
+if sed -n '/<header class="workspace-header my-work-header">/,/<\/header>/p' "$my_work_html" | grep --quiet 'account-avatar'; then
+  echo "My Work header unexpectedly displayed the current user avatar" >&2
+  exit 1
+fi
 grep --quiet "CI managed card" "$my_work_html"
 grep 'data-my-work-card="'"$managed_card_id"'"' "$my_work_html" \
   | grep --quiet 'data-my-work-group="upcoming".*data-priority="high"'
@@ -274,6 +406,11 @@ curl --fail --silent --show-error --get --cookie "$cookie_jar" \
 grep 'data-my-work-card="'"$managed_card_id"'"' "$my_work_html" \
   | grep --quiet 'data-my-work-group="today".*data-priority="urgent"'
 curl --fail --silent --show-error --cookie "$cookie_jar" \
+  "$base_url/app/my-work" > "$my_work_html"
+grep --quiet '<option value="today" selected>Due today</option>' "$my_work_html"
+grep 'data-my-work-card="'"$managed_card_id"'"' "$my_work_html" \
+  | grep --quiet 'data-my-work-group="today".*data-priority="urgent"'
+curl --fail --silent --show-error --cookie "$cookie_jar" \
   "$base_url/app/cards/$managed_card_id?returnTo=my-work" > "$card_html"
 grep --quiet "Back to My work" "$card_html"
 grep --quiet 'data-workspace-page="myWork"' "$card_html"
@@ -286,10 +423,14 @@ complete_card_response="$(
     --data-urlencode "columnId=$last_column_id"
 )"
 printf '%s' "$complete_card_response" | grep --quiet '"success":true'
-curl --fail --silent --show-error --cookie "$cookie_jar" "$base_url/app/my-work" > "$my_work_html"
+curl --fail --silent --show-error --cookie "$cookie_jar" \
+  "$base_url/app/my-work?resetFilters=1" > "$my_work_html"
 grep 'data-my-work-card="'"$managed_card_id"'"' "$my_work_html" \
   | grep --quiet 'data-my-work-group="completed".*data-priority="urgent"'
 grep --quiet "Completed recently" "$my_work_html"
+curl --fail --silent --show-error --cookie "$cookie_jar" \
+  "$base_url/app/my-work" > "$my_work_html"
+grep --quiet '<option value="all" selected>All dates</option>' "$my_work_html"
 
 card_comment_status="$(
   curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
@@ -703,6 +844,171 @@ if grep --quiet "CI managed card" "$my_work_html"; then
   exit 1
 fi
 grep --quiet "Nothing assigned to you yet" "$my_work_html"
+
+if command -v docker > /dev/null 2>&1 \
+  && smoke_db_user="$(docker compose exec -T postgres printenv POSTGRES_USER 2> /dev/null | tr -d '\r')" \
+  && smoke_db_name="$(docker compose exec -T postgres printenv POSTGRES_DB 2> /dev/null | tr -d '\r')"; then
+  secondary_slug="ci-secondary-$(printf '%s' "$run_id" | tr -cd 'a-zA-Z0-9-' | cut -c1-70)"
+  secondary_workspace_id="$(
+    printf '%s\n' \
+      "WITH new_workspace AS (" \
+      "  INSERT INTO workspace(name,slug,plan)" \
+      "  VALUES('CI Secondary Workspace', :'secondary_slug', 'free')" \
+      "  RETURNING id" \
+      "), new_membership AS (" \
+      "  INSERT INTO workspace_member(workspace_id,user_id,role)" \
+      "  SELECT new_workspace.id,owner_account.id,'owner'" \
+      "  FROM new_workspace" \
+      "  JOIN app_user owner_account ON owner_account.email=:'owner_email'" \
+      "  RETURNING workspace_id" \
+      ")" \
+      "SELECT workspace_id FROM new_membership;" \
+      | docker compose exec -T postgres psql \
+        --username "$smoke_db_user" \
+        --dbname "$smoke_db_name" \
+        --set ON_ERROR_STOP=1 \
+        --set secondary_slug="$secondary_slug" \
+        --set owner_email="$test_email" \
+        --quiet --tuples-only --no-align --file=- \
+      | tr -d '\r[:space:]'
+  )"
+  foreign_workspace_id="$(
+    docker compose exec -T postgres psql \
+      --username "$smoke_db_user" \
+      --dbname "$smoke_db_name" \
+      --set ON_ERROR_STOP=1 \
+      --quiet --tuples-only --no-align \
+      --command "INSERT INTO workspace(name,slug,plan) VALUES('CI Foreign Workspace','${secondary_slug}-foreign','free') RETURNING id;" \
+      | tr -d '\r[:space:]'
+  )"
+  test -n "$secondary_workspace_id"
+  test -n "$foreign_workspace_id"
+
+  curl --fail --silent --show-error --cookie "$cookie_jar" "$base_url/app" > "$app_html"
+  grep --quiet 'class="workspace-picker-menu"' "$app_html"
+  grep --quiet 'CI Secondary Workspace' "$app_html"
+  workspace_switch_csrf="$(
+    grep -A 3 "action=\"/app/workspaces/$secondary_workspace_id/select\"" "$app_html" \
+      | sed -n 's/.*name="csrfToken" value="\([^"]*\)".*/\1/p' | head -1
+  )"
+  test -n "$workspace_switch_csrf"
+
+  invalid_workspace_result="$(
+    curl --silent --show-error --output /dev/null --write-out '%{http_code}|%{redirect_url}' \
+      --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+      --request POST "$base_url/app/workspaces/$secondary_workspace_id/select" \
+      --data-urlencode "csrfToken=invalid"
+  )"
+  if [[ "$invalid_workspace_result" != 302*"workspaceError=invalid" ]]; then
+    echo "Invalid workspace CSRF returned an unexpected result: $invalid_workspace_result" >&2
+    exit 1
+  fi
+
+  select_workspace_result="$(
+    curl --silent --show-error --output /dev/null --write-out '%{http_code}|%{redirect_url}' \
+      --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+      --request POST "$base_url/app/workspaces/$secondary_workspace_id/select" \
+      --data-urlencode "csrfToken=$workspace_switch_csrf"
+  )"
+  if [[ "$select_workspace_result" != 302*"/app/my-work" ]]; then
+    echo "Workspace selection returned an unexpected result: $select_workspace_result" >&2
+    exit 1
+  fi
+  curl --fail --silent --show-error --get --cookie "$cookie_jar" \
+    --data-urlencode "due=overdue" "$base_url/app/my-work" > "$my_work_html"
+  grep --quiet 'CI Secondary Workspace' "$my_work_html"
+  grep --quiet '<option value="overdue" selected>Overdue</option>' "$my_work_html"
+  selected_workspace_id="$(
+    docker compose exec -T postgres psql \
+      --username "$smoke_db_user" \
+      --dbname "$smoke_db_name" \
+      --set owner_email="$test_email" \
+      --tuples-only --no-align \
+      --command "SELECT last_workspace_id FROM app_user WHERE email=:'owner_email';" \
+      | tr -d '\r[:space:]'
+  )"
+  test "$selected_workspace_id" = "$secondary_workspace_id"
+
+  forbidden_workspace_result="$(
+    curl --silent --show-error --output /dev/null --write-out '%{http_code}|%{redirect_url}' \
+      --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+      --request POST "$base_url/app/workspaces/$foreign_workspace_id/select" \
+      --data-urlencode "csrfToken=$workspace_switch_csrf"
+  )"
+  if [[ "$forbidden_workspace_result" != 302*"workspaceError=forbidden" ]]; then
+    echo "Foreign workspace selection returned an unexpected result: $forbidden_workspace_result" >&2
+    exit 1
+  fi
+
+  logout_csrf="$(
+    sed -n '/action="\/auth\/logout"/,/<\/form>/ s/.*name="csrfToken" value="\([^"]*\)".*/\1/p' \
+      "$my_work_html" | head -1
+  )"
+  test -n "$logout_csrf"
+  curl --silent --show-error --output /dev/null \
+    --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+    --request POST "$base_url/auth/logout" \
+    --data-urlencode "csrfToken=$logout_csrf"
+  curl --fail --silent --show-error --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+    "$base_url/login" > "$signup_html"
+  login_csrf="$(sed -n 's/.*name="csrfToken" value="\([^"]*\)".*/\1/p' "$signup_html" | head -1)"
+  test -n "$login_csrf"
+  login_result="$(
+    curl --silent --show-error --output /dev/null --write-out '%{http_code}|%{redirect_url}' \
+      --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+      --request POST "$base_url/auth/login" \
+      --data-urlencode "csrfToken=$login_csrf" \
+      --data-urlencode "email=$test_email" \
+      --data-urlencode "password=CI-updated-password-2026"
+  )"
+  if [[ "$login_result" != 302*"/app" ]]; then
+    echo "Workspace restoration login returned an unexpected result: $login_result" >&2
+    exit 1
+  fi
+  curl --fail --silent --show-error --cookie "$cookie_jar" \
+    "$base_url/app/my-work" > "$my_work_html"
+  grep --quiet 'CI Secondary Workspace' "$my_work_html"
+  grep --quiet '<option value="overdue" selected>Overdue</option>' "$my_work_html"
+
+  printf '%s\n' \
+    "DELETE FROM workspace_member" \
+    " WHERE workspace_id=CAST(:'secondary_workspace_id' AS UUID)" \
+    "   AND user_id=(SELECT id FROM app_user WHERE email=:'owner_email');" \
+    | docker compose exec -T postgres psql \
+      --username "$smoke_db_user" \
+      --dbname "$smoke_db_name" \
+      --set ON_ERROR_STOP=1 \
+      --set secondary_workspace_id="$secondary_workspace_id" \
+      --set owner_email="$test_email" \
+      --file=- > /dev/null
+  curl --fail --silent --show-error --cookie "$cookie_jar" \
+    "$base_url/app/my-work" > "$my_work_html"
+  grep --quiet 'CI Workspace' "$my_work_html"
+  grep --quiet '<option value="all" selected>All dates</option>' "$my_work_html"
+  if grep --quiet 'class="workspace-picker-menu"' "$my_work_html"; then
+    echo "Removed workspace remained available in the picker" >&2
+    exit 1
+  fi
+  fallback_workspace_id="$(
+    docker compose exec -T postgres psql \
+      --username "$smoke_db_user" \
+      --dbname "$smoke_db_name" \
+      --set owner_email="$test_email" \
+      --tuples-only --no-align \
+      --command "SELECT last_workspace_id FROM app_user WHERE email=:'owner_email';" \
+      | tr -d '\r[:space:]'
+  )"
+  if [[ -z "$fallback_workspace_id" || "$fallback_workspace_id" = "$secondary_workspace_id" ]]; then
+    echo "Removed workspace was not repaired in the saved preference" >&2
+    exit 1
+  fi
+  docker compose exec -T postgres psql \
+    --username "$smoke_db_user" \
+    --dbname "$smoke_db_name" \
+    --set ON_ERROR_STOP=1 \
+    --command "DELETE FROM workspace WHERE id IN ('$secondary_workspace_id','$foreign_workspace_id');" \
+    > /dev/null
+fi
 
 curl --fail --silent --show-error --location \
   --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \

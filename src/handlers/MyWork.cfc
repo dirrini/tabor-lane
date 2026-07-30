@@ -13,13 +13,56 @@ component {
 		if ( !structKeyExists( session, "auth" ) ) relocate( uri="/login" );
 		session.auth.emailVerified = authService.isEmailVerified( session.auth.id );
 		if ( !session.auth.emailVerified ) relocate( uri="/check-email" );
+		var workspaceContext = authService.resolveWorkspaceContext(
+			session.auth.id,
+			session.auth.workspaceId ?: ""
+		);
+		if ( !workspaceContext.found ) {
+			sessionInvalidate();
+			relocate( uri="/login" );
+		}
+		session.auth.workspaceId = workspaceContext.workspaceId;
+		session.auth.workspaceName = workspaceContext.workspaceName;
+		session.auth.role = workspaceContext.role;
 		prc.auth = session.auth;
+		prc.workspaceSwitchCsrfToken = csrfGenerateToken( "workspace-select" );
 	}
 
 	function index( event, rc, prc ) {
 		prc.page = "myWork";
 		prc.pageTitle = $r( "myWork.metaTitle" );
-		prc.myWork = loadDashboard( prc.auth, rc );
+		var hasExplicitFilters = ( rc.resetFilters ?: "" ) == "1";
+		for ( var filterKey in [ "query", "boardId", "priority", "due", "sort" ] ) {
+			if ( structKeyExists( rc, filterKey ) ) {
+				hasExplicitFilters = true;
+				break;
+			}
+		}
+		var requestedFilters = hasExplicitFilters
+			? (
+				( rc.resetFilters ?: "" ) == "1"
+					? {}
+					: {
+						query=rc.query ?: "",
+						boardId=rc.boardId ?: "",
+						priority=rc.priority ?: "",
+						due=rc.due ?: "all",
+						sort=rc.sort ?: "due"
+					}
+			)
+			: myWorkService.getSavedFilters( prc.auth.id, prc.auth.workspaceId );
+		if ( hasExplicitFilters ) {
+			requestedFilters = myWorkService.saveFilters(
+				userId=prc.auth.id,
+				workspaceId=prc.auth.workspaceId,
+				requestedFilters=requestedFilters
+			);
+		}
+		prc.myWork = myWorkService.getDashboard(
+			userId=prc.auth.id,
+			workspaceId=prc.auth.workspaceId,
+			requestedFilters=requestedFilters
+		);
 		prc.myWorkCsrfToken = csrfGenerateToken( "my-work-write" );
 		prc.logoutCsrfToken = csrfGenerateToken( "logout" );
 		prc.notice = ( rc.saved ?: "" ) == "1" ? "saved" : "";

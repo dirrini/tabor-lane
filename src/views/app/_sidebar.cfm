@@ -1,12 +1,44 @@
+<cfscript>
+    hasMultipleWorkspaces = prc.workspaces.len() > 1;
+</cfscript>
 <cfoutput>
 <aside class="workspace-sidebar">
     <button class="workspace-menu-close" type="button" data-workspace-menu-close aria-label="#$r( 'app.menu.close' )#"><svg class="icon"><use href="/resources/icons.svg##close"></use></svg></button>
     <a class="brand" href="/"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><span class="brand-name">Tabor<span>Lane</span></span></a>
-    <div class="workspace-picker">
-        <span class="workspace-avatar">#encodeForHTML( left( prc.auth.workspaceName, 1 ) )#</span>
-        <div><small>#$r( "app.workspace" )#</small><strong>#encodeForHTML( prc.auth.workspaceName )#</strong></div>
-        <b><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##chevron-down"></use></svg></b>
-    </div>
+    <cfif hasMultipleWorkspaces>
+        <details class="workspace-picker-menu">
+            <summary class="workspace-picker" aria-label="#encodeForHTMLAttribute( $r( 'app.workspace.choose' ) )#">
+                <span class="workspace-avatar">#encodeForHTML( left( prc.auth.workspaceName, 1 ) )#</span>
+                <span><small>#$r( "app.workspace" )#</small><strong>#encodeForHTML( prc.auth.workspaceName )#</strong></span>
+                <b><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##chevron-down"></use></svg></b>
+            </summary>
+            <div class="workspace-picker-options" role="group" aria-label="#encodeForHTMLAttribute( $r( 'app.workspace.choose' ) )#">
+                <cfloop array="#prc.workspaces#" item="availableWorkspace">
+                    <cfset isCurrentWorkspace = availableWorkspace.id == prc.auth.workspaceId>
+                    <cfif isCurrentWorkspace>
+                        <div class="workspace-picker-option current" aria-current="true">
+                            <span class="workspace-avatar">#encodeForHTML( left( availableWorkspace.name, 1 ) )#</span>
+                            <span><strong>#encodeForHTML( availableWorkspace.name )#</strong><small>#$r( "app.workspace.current" )#</small></span>
+                            <svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##check"></use></svg>
+                        </div>
+                    <cfelse>
+                        <form method="post" action="/app/workspaces/#encodeForURL( availableWorkspace.id )#/select">
+                            <input type="hidden" name="csrfToken" value="#encodeForHTMLAttribute( prc.workspaceSwitchCsrfToken )#">
+                            <button class="workspace-picker-option" type="submit" title="#encodeForHTMLAttribute( replace( $r( 'app.workspace.switchTo' ), '{workspace}', availableWorkspace.name ) )#">
+                                <span class="workspace-avatar">#encodeForHTML( left( availableWorkspace.name, 1 ) )#</span>
+                                <span><strong>#encodeForHTML( availableWorkspace.name )#</strong><small>#encodeForHTML( $r( "workspace.role.#availableWorkspace.role#", availableWorkspace.role ) )#</small></span>
+                            </button>
+                        </form>
+                    </cfif>
+                </cfloop>
+            </div>
+        </details>
+    <cfelse>
+        <div class="workspace-picker">
+            <span class="workspace-avatar">#encodeForHTML( left( prc.auth.workspaceName, 1 ) )#</span>
+            <div><small>#$r( "app.workspace" )#</small><strong>#encodeForHTML( prc.auth.workspaceName )#</strong></div>
+        </div>
+    </cfif>
     <nav hx-boost="true" hx-target="##workspace-main" hx-select="##workspace-main" hx-swap="outerHTML show:top" hx-push-url="true">
         <a href="/app/my-work" class="#prc.page == 'myWork' ? 'active' : ''#" #prc.page == 'myWork' ? 'aria-current="page"' : ''#><span><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##home"></use></svg></span>#$r( "app.myWork" )#</a>
         <a href="/app" class="#prc.page == 'app' ? 'active' : ''#" #prc.page == 'app' ? 'aria-current="page"' : ''#><span><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##board"></use></svg></span>#$r( "app.boards" )#</a>
@@ -16,7 +48,10 @@
         <a href="##"><span><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##settings"></use></svg></span>#$r( "app.settings" )#</a>
     </nav>
     <a class="workspace-account #prc.page == 'profile' || prc.page == 'billing' ? 'active' : ''#" href="/app/profile" hx-get="/app/profile" hx-target="##workspace-main" hx-select="##workspace-main" hx-swap="outerHTML show:top" hx-push-url="true" #prc.page == 'profile' || prc.page == 'billing' ? 'aria-current="page"' : ''#>
-        <span class="workspace-avatar account-avatar">#encodeForHTML( left( prc.auth.displayName, 1 ) )#</span>
+        <span class="user-avatar account-avatar" data-current-user-avatar>
+            <span data-avatar-initials>#encodeForHTML( prc.currentUserInitials )#</span>
+            <cfif prc.currentUserAvatar.available><img src="#encodeForHTMLAttribute( prc.currentUserAvatar.url )#" alt=""></cfif>
+        </span>
         <div><strong>#encodeForHTML( prc.auth.displayName )#</strong><small>#encodeForHTML( $r( "workspace.role.#prc.auth.role#", prc.auth.role ) )# &middot; #encodeForHTML( prc.auth.email )#</small></div>
     </a>
     <form method="post" action="/auth/logout"><input type="hidden" name="csrfToken" value="#encodeForHTMLAttribute( prc.logoutCsrfToken )#"><button class="workspace-back" type="submit"><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##arrow-left"></use></svg> #$r( "app.logout" )#</button></form>

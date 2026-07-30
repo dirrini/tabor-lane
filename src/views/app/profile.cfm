@@ -47,6 +47,58 @@
             </section>
         </div>
 
+        <section id="profile-avatar" class="members-panel profile-panel profile-avatar-panel"
+            data-avatar-manager
+            data-avatar-presign-url="/app/profile/avatar/presign"
+            data-avatar-complete-url-template="/app/profile/avatar/{id}/complete"
+            data-avatar-remove-url="/app/profile/avatar/remove"
+            data-avatar-csrf-token="#encodeForHTMLAttribute( prc.avatarCsrfToken )#"
+            data-avatar-max-source-bytes="5242880"
+            data-avatar-invalid-type="#encodeForHTMLAttribute( $r( 'profile.avatar.error.invalid_type' ) )#"
+            data-avatar-source-too-large="#encodeForHTMLAttribute( $r( 'profile.avatar.error.source_too_large' ) )#"
+            data-avatar-source-dimensions="#encodeForHTMLAttribute( $r( 'profile.avatar.error.source_dimensions' ) )#"
+            data-avatar-output-too-large="#encodeForHTMLAttribute( $r( 'profile.avatar.error.output_too_large' ) )#"
+            data-avatar-invalid-output="#encodeForHTMLAttribute( $r( 'profile.avatar.error.invalid_output' ) )#"
+            data-avatar-invalid-dimensions="#encodeForHTMLAttribute( $r( 'profile.avatar.error.invalid_dimensions' ) )#"
+            data-avatar-rate="#encodeForHTMLAttribute( $r( 'profile.avatar.error.rate' ) )#"
+            data-avatar-generic-error="#encodeForHTMLAttribute( $r( 'profile.avatar.error.generic' ) )#"
+            data-avatar-uploading="#encodeForHTMLAttribute( $r( 'profile.avatar.uploading' ) )#"
+            data-avatar-saved="#encodeForHTMLAttribute( $r( 'profile.avatar.saved' ) )#"
+            data-avatar-removed="#encodeForHTMLAttribute( $r( 'profile.avatar.removed' ) )#"
+            data-avatar-remove-confirm="#encodeForHTMLAttribute( $r( 'profile.avatar.removeConfirm' ) )#">
+            <div class="panel-heading"><div><h2>#$r( "profile.avatar.title" )#</h2><p>#$r( "profile.avatar.body" )#</p></div></div>
+            <div class="profile-avatar-manager">
+                <div class="profile-avatar-preview user-avatar account-avatar" data-avatar-preview>
+                    <span data-avatar-initials>#encodeForHTML( prc.avatarInitials )#</span>
+                    <cfif prc.avatar.available><img src="#encodeForHTMLAttribute( prc.avatar.url )#" alt=""></cfif>
+                </div>
+                <div class="profile-avatar-actions">
+                    <p>#$r( "profile.avatar.hint" )#</p>
+                    <label class="button button-primary button-small profile-avatar-file">
+                        <svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##upload"></use></svg>
+                        <span>#$r( prc.avatar.available ? "profile.avatar.replace" : "profile.avatar.choose" )#</span>
+                        <input class="sr-only" type="file" accept="image/jpeg,image/png,image/webp" data-avatar-file>
+                    </label>
+                    <cfif prc.avatar.available><button class="button button-ghost button-small" type="button" data-avatar-remove><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##trash"></use></svg>#$r( "profile.avatar.remove" )#</button></cfif>
+                </div>
+                <div class="avatar-crop-editor" data-avatar-editor hidden>
+                    <div class="avatar-crop-stage" data-avatar-stage tabindex="0" role="application" aria-label="#encodeForHTMLAttribute( $r( 'profile.avatar.cropArea' ) )#">
+                        <img data-avatar-crop-image alt="">
+                        <span aria-hidden="true"></span>
+                    </div>
+                    <div class="avatar-crop-controls">
+                        <label>#$r( "profile.avatar.zoom" )#<input type="range" min="1" max="3" step="0.01" value="1" data-avatar-zoom></label>
+                        <p>#$r( "profile.avatar.cropHint" )#</p>
+                        <div>
+                            <button class="button button-ghost button-small" type="button" data-avatar-cancel>#$r( "app.card.cancel" )#</button>
+                            <button class="button button-primary button-small" type="button" data-avatar-save><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##check"></use></svg>#$r( "profile.avatar.usePhoto" )#</button>
+                        </div>
+                    </div>
+                </div>
+                <p class="profile-avatar-status" role="status" aria-live="polite" data-avatar-status></p>
+            </div>
+        </section>
+
         <div class="profile-grid">
             <section class="members-panel profile-panel">
                 <div class="panel-heading"><div><h2>#$r( "profile.personal.title" )#</h2><p>#$r( "profile.personal.body" )#</p></div></div>

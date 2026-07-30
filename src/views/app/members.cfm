@@ -17,7 +17,10 @@
                 <div class="member-list">
                     <cfloop array="#prc.members#" item="member">
                         <article class="member-row">
-                            <span class="workspace-avatar account-avatar">#encodeForHTML( left( member.display_name, 1 ) )#</span>
+                            <span class="user-avatar account-avatar">
+                                <span>#encodeForHTML( member.initials )#</span>
+                                <cfif len( member.avatar_id ?: "" )><img src="/app/users/#encodeForURL( member.id )#/avatar?v=#encodeForURL( member.avatar_id )#" alt=""></cfif>
+                            </span>
                             <div><strong>#encodeForHTML( member.display_name )#</strong><small>#encodeForHTML( member.email )#</small></div>
                             <span class="role-badge">#encodeForHTML( $r( "workspace.role.#member.role#", member.role ) )#</span>
                         </article>

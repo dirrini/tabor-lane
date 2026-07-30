@@ -37,7 +37,7 @@
 			<svg class="icon" aria-hidden="true"><use href="/resources/icons.svg###myWork.hasFilters ? 'search' : 'list-checks'#"></use></svg>
 			<h2>#$r( myWork.hasFilters ? "myWork.empty.filteredTitle" : "myWork.empty.title" )#</h2>
 			<p>#$r( myWork.hasFilters ? "myWork.empty.filteredBody" : "myWork.empty.body" )#</p>
-			<cfif myWork.hasFilters><a class="button button-ghost button-small" href="/app/my-work" hx-get="/app/my-work" hx-target="##workspace-main" hx-select="##workspace-main" hx-swap="outerHTML" hx-push-url="true">#$r( "myWork.filter.clear" )#</a></cfif>
+			<cfif myWork.hasFilters><a class="button button-ghost button-small" href="/app/my-work?resetFilters=1" hx-get="/app/my-work?resetFilters=1" hx-target="##workspace-main" hx-select="##workspace-main" hx-swap="outerHTML" hx-push-url="true">#$r( "myWork.filter.clear" )#</a></cfif>
 		</div>
 	<cfelse>
 		<div class="my-work-groups">

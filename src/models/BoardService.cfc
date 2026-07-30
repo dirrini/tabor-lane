@@ -1,5 +1,7 @@
 component singleton {
 
+	property name="avatarService" inject="AvatarService";
+
 	struct function getWorkspaceBoard( required string userId, required string workspaceId, string boardId = "" ){
 		var boards = queryExecute(
 			"SELECT CAST(b.id AS TEXT) AS id, b.name, b.description, w.name AS workspace_name, w.plan, wm.role
@@ -39,11 +41,19 @@ component singleton {
 		var cards = queryExecute(
 			"SELECT CAST(c.id AS TEXT) AS id, CAST(c.column_id AS TEXT) AS column_id,
 			        c.title, c.description, c.priority, array_to_string(c.labels, ',') AS labels_csv, c.due_at, c.position,
-			        c.version, c.created_at, u.display_name AS assignee_name,
+			        c.version, c.created_at,CAST(u.id AS TEXT) AS assignee_id,
+			        u.display_name AS assignee_name,CAST(assignee_avatar.id AS TEXT) AS assignee_avatar_id,
 			        COALESCE(att.attachment_count, 0) AS attachment_count,
 			        COALESCE(att.attachment_names, '') AS attachment_names
 			 FROM card c
 			 LEFT JOIN app_user u ON u.id = c.assignee_id
+			 LEFT JOIN workspace_member assignee_membership
+			   ON assignee_membership.user_id=u.id
+			  AND assignee_membership.workspace_id=c.workspace_id
+			 LEFT JOIN user_avatar assignee_avatar
+			   ON assignee_avatar.user_id=u.id
+			  AND assignee_avatar.status='available' AND assignee_avatar.deleted_at IS NULL
+			  AND assignee_membership.user_id IS NOT NULL
 			 LEFT JOIN LATERAL (
 			     SELECT COUNT(*) AS attachment_count,
 			            string_agg(a.original_filename, CHR(10) ORDER BY a.created_at) AS attachment_names
@@ -55,6 +65,9 @@ component singleton {
 			{ boardId = selectedBoard.id },
 			{ returntype = "array" }
 		);
+		for ( var assignedCard in cards ) {
+			assignedCard.assignee_initials = avatarService.initials( assignedCard.assignee_name ?: "" );
+		}
 
 		for ( var column in columns ) {
 			column.cards = [];
@@ -336,17 +349,41 @@ component singleton {
 			{ returntype="array" }
 		);
 		if ( !cards.len() ) return { found=false };
+		var members = queryExecute(
+			"SELECT CAST(u.id AS TEXT) id,u.display_name
+			 FROM workspace_member wm
+			 JOIN app_user u ON u.id=wm.user_id
+			 WHERE wm.workspace_id=CAST(:workspaceId AS UUID)
+			 ORDER BY u.display_name",
+			{ workspaceId=arguments.workspaceId },
+			{ returntype="array" }
+		);
+		var comments = queryExecute(
+			"SELECT cc.body,cc.created_at,CAST(u.id AS TEXT) AS author_id,
+			        COALESCE(u.display_name,'Former member') author_name,
+			        CAST(author_avatar.id AS TEXT) AS author_avatar_id
+			 FROM card_comment cc
+			 LEFT JOIN app_user u ON u.id=cc.author_id
+			 LEFT JOIN workspace_member author_membership
+			   ON author_membership.user_id=u.id
+			  AND author_membership.workspace_id=CAST(:workspaceId AS UUID)
+			 LEFT JOIN user_avatar author_avatar
+			   ON author_avatar.user_id=u.id
+			  AND author_avatar.status='available' AND author_avatar.deleted_at IS NULL
+			  AND author_membership.user_id IS NOT NULL
+			 WHERE cc.card_id=CAST(:cardId AS UUID)
+			 ORDER BY cc.created_at",
+			{ cardId=arguments.cardId, workspaceId=arguments.workspaceId },
+			{ returntype="array" }
+		);
+		for ( var comment in comments ) {
+			comment.author_initials = avatarService.initials( comment.author_name );
+		}
 		return {
 			found=true,
 			card=cards[1],
-			members=queryExecute(
-				"SELECT CAST(u.id AS TEXT) id,u.display_name FROM workspace_member wm JOIN app_user u ON u.id=wm.user_id WHERE wm.workspace_id=CAST(:workspaceId AS UUID) ORDER BY u.display_name",
-				{ workspaceId=arguments.workspaceId }, { returntype="array" }
-			),
-			comments=queryExecute(
-				"SELECT cc.body,cc.created_at,COALESCE(u.display_name,'Former member') author_name FROM card_comment cc LEFT JOIN app_user u ON u.id=cc.author_id WHERE cc.card_id=CAST(:cardId AS UUID) ORDER BY cc.created_at",
-				{ cardId=arguments.cardId }, { returntype="array" }
-			),
+			members=members,
+			comments=comments,
 			activity=queryExecute(
 				"SELECT ca.action,ca.created_at,COALESCE(u.display_name,'System') actor_name FROM card_activity ca LEFT JOIN app_user u ON u.id=ca.actor_id WHERE ca.card_id=CAST(:cardId AS UUID) ORDER BY ca.created_at DESC LIMIT 50",
 				{ cardId=arguments.cardId }, { returntype="array" }

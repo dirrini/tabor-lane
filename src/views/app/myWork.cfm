@@ -10,7 +10,6 @@
 			<h1>#$r( "myWork.title" )#</h1>
 			<p>#$r( "myWork.body" )#</p>
 		</div>
-		<span class="avatar account-avatar">#encodeForHTML( left( prc.auth.displayName, 1 ) )#</span>
 	</header>
 
 	<form class="my-work-filters" method="get" action="/app/my-work"
@@ -62,7 +61,7 @@
 		</label>
 		<div class="my-work-filter-actions">
 			<button class="button button-primary button-small" type="submit"><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##filter"></use></svg>#$r( "myWork.filter.apply" )#</button>
-			<a class="button button-ghost button-small" href="/app/my-work" hx-get="/app/my-work" hx-target="##workspace-main" hx-select="##workspace-main" hx-swap="outerHTML show:top" hx-push-url="true"><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##close"></use></svg>#$r( "myWork.filter.clear" )#</a>
+			<a class="button button-ghost button-small" href="/app/my-work?resetFilters=1" hx-get="/app/my-work?resetFilters=1" hx-target="##workspace-main" hx-select="##workspace-main" hx-swap="outerHTML show:top" hx-push-url="true"><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##close"></use></svg>#$r( "myWork.filter.clear" )#</a>
 		</div>
 	</form>
 

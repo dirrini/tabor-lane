@@ -166,6 +166,111 @@ component singleton {
 		};
 	}
 
+	struct function getSavedFilters( required string userId, required string workspaceId ){
+		var rows = queryExecute(
+			"SELECT preference.search_query,
+			        COALESCE(CAST(preference.board_id AS TEXT),'') AS saved_board_id,
+			        COALESCE(CAST(active_board.id AS TEXT),'') AS board_id,
+			        preference.priority_filter,preference.due_filter,preference.sort_order
+			 FROM my_work_filter_preference preference
+			 JOIN workspace_member membership
+			   ON membership.workspace_id=preference.workspace_id
+			  AND membership.user_id=preference.user_id
+			 LEFT JOIN board active_board
+			   ON active_board.id=preference.board_id
+			  AND active_board.workspace_id=preference.workspace_id
+			  AND active_board.is_archived=false
+			 WHERE preference.workspace_id=CAST(:workspaceId AS UUID)
+			   AND preference.user_id=CAST(:userId AS UUID)",
+			{ workspaceId=arguments.workspaceId, userId=arguments.userId },
+			{ returntype="array" }
+		);
+		if ( !rows.len() ) return normalizeFilters( {} );
+		if ( rows[ 1 ].saved_board_id.len() && !rows[ 1 ].board_id.len() ) {
+			queryExecute(
+				"UPDATE my_work_filter_preference
+				 SET board_id=NULL,updated_at=now()
+				 WHERE workspace_id=CAST(:workspaceId AS UUID)
+				   AND user_id=CAST(:userId AS UUID)
+				   AND board_id=CAST(:boardId AS UUID)
+				   AND NOT EXISTS(
+				       SELECT 1
+				       FROM board active_board
+				       WHERE active_board.id=my_work_filter_preference.board_id
+				         AND active_board.workspace_id=my_work_filter_preference.workspace_id
+				         AND active_board.is_archived=false
+				   )",
+				{
+					workspaceId=arguments.workspaceId,
+					userId=arguments.userId,
+					boardId=rows[ 1 ].saved_board_id
+				}
+			);
+		}
+		return normalizeFilters( {
+			query=rows[ 1 ].search_query,
+			boardId=rows[ 1 ].board_id,
+			priority=rows[ 1 ].priority_filter,
+			due=rows[ 1 ].due_filter,
+			sort=rows[ 1 ].sort_order
+		} );
+	}
+
+	struct function saveFilters(
+		required string userId,
+		required string workspaceId,
+		required struct requestedFilters
+	){
+		var filters = normalizeFilters( arguments.requestedFilters );
+		if ( filters.boardId.len() ) {
+			var validBoard = queryExecute(
+				"SELECT 1
+				 FROM board
+				 JOIN workspace_member membership
+				   ON membership.workspace_id=board.workspace_id
+				 WHERE board.id=CAST(:boardId AS UUID)
+				   AND board.workspace_id=CAST(:workspaceId AS UUID)
+				   AND board.is_archived=false
+				   AND membership.user_id=CAST(:userId AS UUID)",
+				{
+					boardId=filters.boardId,
+					workspaceId=arguments.workspaceId,
+					userId=arguments.userId
+				},
+				{ returntype="array" }
+			);
+			if ( !validBoard.len() ) filters.boardId = "";
+		}
+		queryExecute(
+			"INSERT INTO my_work_filter_preference(
+			    workspace_id,user_id,search_query,board_id,priority_filter,due_filter,sort_order
+			 )
+			 SELECT membership.workspace_id,membership.user_id,:searchQuery,
+			        CASE WHEN :boardId='' THEN NULL ELSE CAST(:boardId AS UUID) END,
+			        :priorityFilter,:dueFilter,:sortOrder
+			 FROM workspace_member membership
+			 WHERE membership.workspace_id=CAST(:workspaceId AS UUID)
+			   AND membership.user_id=CAST(:userId AS UUID)
+			 ON CONFLICT(workspace_id,user_id) DO UPDATE
+			 SET search_query=EXCLUDED.search_query,
+			     board_id=EXCLUDED.board_id,
+			     priority_filter=EXCLUDED.priority_filter,
+			     due_filter=EXCLUDED.due_filter,
+			     sort_order=EXCLUDED.sort_order,
+			     updated_at=now()",
+			{
+				searchQuery=filters.query,
+				boardId=filters.boardId,
+				priorityFilter=filters.priority,
+				dueFilter=filters.due,
+				sortOrder=filters.sort,
+				workspaceId=arguments.workspaceId,
+				userId=arguments.userId
+			}
+		);
+		return filters;
+	}
+
 	struct function updateCardFocus(
 		required string userId,
 		required string workspaceId,

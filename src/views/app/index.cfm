@@ -10,7 +10,6 @@
                     <h1>#encodeForHTML( prc.workspaceBoard.board.name )#</h1>
                 </div>
                 <div>
-                    <span class="avatar account-avatar">#encodeForHTML( left( prc.auth.displayName, 1 ) )#</span>
                     <cfif listFindNoCase("owner,admin",prc.workspaceBoard.board.role)><a class="button button-ghost button-small" href="/app/boards/manage?boardId=#encodeForURL(prc.workspaceBoard.board.id)#" hx-get="/app/boards/manage?boardId=#encodeForURL(prc.workspaceBoard.board.id)#" hx-target="##workspace-main" hx-select="##workspace-main" hx-swap="outerHTML" hx-push-url="true"><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##settings"></use></svg> #$r("boards.manage")#</a></cfif>
                     <cfif prc.workspaceBoard.board.role != "viewer"><button class="button button-primary button-small" type="button" data-card-form-toggle>
                         <svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##plus"></use></svg> #$r( "app.newCard" )#
@@ -69,7 +68,12 @@
                                                 </span>
                                             </cfif>
                                         </span>
-                                        <cfif len( card.assignee_name ?: "" )><i class="avatar account-avatar" title="#encodeForHTMLAttribute( card.assignee_name )#">#encodeForHTML( left( card.assignee_name, 1 ) )#</i></cfif>
+                                        <cfif len( card.assignee_name ?: "" )>
+                                            <i class="avatar account-avatar user-avatar" title="#encodeForHTMLAttribute( card.assignee_name )#">
+                                                <span>#encodeForHTML( card.assignee_initials )#</span>
+                                                <cfif len( card.assignee_avatar_id ?: "" )><img src="/app/users/#encodeForURL( card.assignee_id )#/avatar?v=#encodeForURL( card.assignee_avatar_id )#" alt=""></cfif>
+                                            </i>
+                                        </cfif>
                                     </div>
                                 </article>
                             </cfloop>

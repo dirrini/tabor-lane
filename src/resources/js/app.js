@@ -443,6 +443,349 @@
     });
   };
 
+  const initAvatarManager = (root) => {
+    const manager = root.matches?.("[data-avatar-manager]")
+      ? root
+      : root.querySelector?.("[data-avatar-manager]");
+    if (!manager || manager.dataset.avatarInitialized) return;
+    manager.dataset.avatarInitialized = "true";
+
+    const fileInput = manager.querySelector("[data-avatar-file]");
+    const editor = manager.querySelector("[data-avatar-editor]");
+    const stage = manager.querySelector("[data-avatar-stage]");
+    const cropImage = manager.querySelector("[data-avatar-crop-image]");
+    const zoomInput = manager.querySelector("[data-avatar-zoom]");
+    const saveButton = manager.querySelector("[data-avatar-save]");
+    const cancelButton = manager.querySelector("[data-avatar-cancel]");
+    const removeButton = manager.querySelector("[data-avatar-remove]");
+    const status = manager.querySelector("[data-avatar-status]");
+    const allowedTypes = ["image/jpeg", "image/png", "image/webp"];
+    const maxSourceBytes = Number(manager.dataset.avatarMaxSourceBytes) || 5242880;
+    const outputPixels = 512;
+    const maxSourceDimension = 16384;
+    const maxSourcePixels = 60000000;
+    const maxWorkingDimension = 4096;
+    const maxWorkingPixels = 12582912;
+    let sourceFile = null;
+    let normalizedUrl = "";
+    let naturalWidth = 0;
+    let naturalHeight = 0;
+    let zoom = 1;
+    let offsetX = 0;
+    let offsetY = 0;
+    let dragState = null;
+
+    const responseValue = (payload, key) => payload?.[key] ?? payload?.[key.toUpperCase()];
+    const messageForCode = (code) => {
+      const suffix = String(code || "generic")
+        .replaceAll("-", "_")
+        .replace(/_([a-z])/g, (_, letter) => letter.toUpperCase())
+        .replace(/^([a-z])/, (_, letter) => letter.toUpperCase());
+      return manager.dataset[`avatar${suffix}`] || manager.dataset.avatarGenericError;
+    };
+    const setStatus = (message, success = false) => {
+      status.textContent = message || "";
+      status.classList.toggle("success", success);
+    };
+    const stageSize = () => stage?.clientWidth || 280;
+    const currentScale = () =>
+      Math.max(stageSize() / naturalWidth, stageSize() / naturalHeight) * zoom;
+    const clampOffsets = () => {
+      const scale = currentScale();
+      const maxX = Math.max(0, (naturalWidth * scale - stageSize()) / 2);
+      const maxY = Math.max(0, (naturalHeight * scale - stageSize()) / 2);
+      offsetX = Math.max(-maxX, Math.min(maxX, offsetX));
+      offsetY = Math.max(-maxY, Math.min(maxY, offsetY));
+    };
+    const renderCrop = () => {
+      if (!naturalWidth || !naturalHeight) return;
+      clampOffsets();
+      const scale = currentScale();
+      cropImage.style.width = `${naturalWidth * scale}px`;
+      cropImage.style.height = `${naturalHeight * scale}px`;
+      cropImage.style.transform =
+        `translate(calc(-50% + ${offsetX}px), calc(-50% + ${offsetY}px))`;
+    };
+    const cropResizeObserver =
+      typeof ResizeObserver === "function" && stage
+        ? new ResizeObserver(() => {
+            if (!editor.hidden) renderCrop();
+          })
+        : null;
+    cropResizeObserver?.observe(stage);
+    manager.addEventListener(
+      "htmx:beforeCleanupElement",
+      () => cropResizeObserver?.disconnect(),
+      { once: true }
+    );
+    const closeEditor = () => {
+      editor.hidden = true;
+      sourceFile = null;
+      fileInput.value = "";
+      dragState = null;
+      stage?.classList.remove("dragging");
+      if (normalizedUrl) URL.revokeObjectURL(normalizedUrl);
+      normalizedUrl = "";
+      cropImage.removeAttribute("src");
+    };
+    const normalizeSource = async (file) => {
+      const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+      try {
+        const sourcePixels = bitmap.width * bitmap.height;
+        if (
+          !bitmap.width ||
+          !bitmap.height ||
+          bitmap.width > maxSourceDimension ||
+          bitmap.height > maxSourceDimension ||
+          sourcePixels > maxSourcePixels
+        ) {
+          throw new Error("source_dimensions");
+        }
+        const workingScale = Math.min(
+          1,
+          maxWorkingDimension / bitmap.width,
+          maxWorkingDimension / bitmap.height,
+          Math.sqrt(maxWorkingPixels / sourcePixels)
+        );
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round(bitmap.width * workingScale));
+        canvas.height = Math.max(1, Math.round(bitmap.height * workingScale));
+        const context = canvas.getContext("2d", { alpha: false });
+        if (!context) throw new Error("invalid_output");
+        context.imageSmoothingEnabled = true;
+        context.imageSmoothingQuality = "high";
+        context.fillStyle = "#ffffff";
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+        const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.92));
+        if (!blob) throw new Error("invalid_output");
+        return blob;
+      } finally {
+        bitmap.close?.();
+      }
+    };
+    const loadSource = async (file) => {
+      if (!allowedTypes.includes(file.type)) {
+        setStatus(manager.dataset.avatarInvalidType);
+        fileInput.value = "";
+        return;
+      }
+      if (!file.size || file.size > maxSourceBytes) {
+        setStatus(manager.dataset.avatarSourceTooLarge);
+        fileInput.value = "";
+        return;
+      }
+      setStatus("");
+      try {
+        const normalized = await normalizeSource(file);
+        if (normalizedUrl) URL.revokeObjectURL(normalizedUrl);
+        normalizedUrl = URL.createObjectURL(normalized);
+        cropImage.src = normalizedUrl;
+        await cropImage.decode();
+        sourceFile = file;
+        naturalWidth = cropImage.naturalWidth;
+        naturalHeight = cropImage.naturalHeight;
+        zoom = 1;
+        offsetX = 0;
+        offsetY = 0;
+        zoomInput.value = "1";
+        editor.hidden = false;
+        renderCrop();
+        stage.focus();
+      } catch (error) {
+        setStatus(messageForCode(error.message));
+        closeEditor();
+      }
+    };
+    const createOutput = async () => {
+      const scale = currentScale();
+      const sourceWidth = stageSize() / scale;
+      const sourceHeight = stageSize() / scale;
+      const sourceX = (naturalWidth - sourceWidth) / 2 - offsetX / scale;
+      const sourceY = (naturalHeight - sourceHeight) / 2 - offsetY / scale;
+      const canvas = document.createElement("canvas");
+      canvas.width = outputPixels;
+      canvas.height = outputPixels;
+      const context = canvas.getContext("2d", { alpha: false });
+      context.fillStyle = "#ffffff";
+      context.fillRect(0, 0, outputPixels, outputPixels);
+      context.drawImage(
+        cropImage,
+        sourceX,
+        sourceY,
+        sourceWidth,
+        sourceHeight,
+        0,
+        0,
+        outputPixels,
+        outputPixels
+      );
+      let output = null;
+      for (const quality of [0.9, 0.82, 0.72]) {
+        output = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", quality));
+        if (output && output.size <= 1048576) break;
+      }
+      if (!output) throw new Error("invalid_output");
+      if (output.size > 1048576) throw new Error("output_too_large");
+      return output;
+    };
+    const updateCurrentAvatar = (url = "") => {
+      document.querySelectorAll("[data-current-user-avatar]").forEach((avatar) => {
+        avatar.querySelector("img")?.remove();
+        if (url) {
+          const image = document.createElement("img");
+          image.src = url;
+          image.alt = "";
+          avatar.append(image);
+        }
+      });
+    };
+    const refreshAvatarPanel = () => {
+      if (window.htmx && document.querySelector("#profile-avatar")) {
+        window.htmx.ajax("GET", "/app/profile", {
+          target: "#profile-avatar",
+          select: "#profile-avatar",
+          swap: "outerHTML",
+        });
+      } else {
+        window.location.assign("/app/profile");
+      }
+    };
+    const uploadCrop = async () => {
+      if (!sourceFile) return;
+      saveButton.disabled = true;
+      cancelButton.disabled = true;
+      setStatus(manager.dataset.avatarUploading);
+      try {
+        const output = await createOutput();
+        const csrfToken = manager.dataset.avatarCsrfToken;
+        const presignResponse = await fetch(manager.dataset.avatarPresignUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" },
+          body: new URLSearchParams({
+            csrfToken,
+            filename: sourceFile.name,
+            sourceContentType: sourceFile.type,
+            sourceSize: String(sourceFile.size),
+            outputSize: String(output.size),
+          }),
+        });
+        const presign = await presignResponse.json();
+        if (!presignResponse.ok || !responseValue(presign, "success")) {
+          throw new Error(responseValue(presign, "code") || "generic");
+        }
+        const avatarId = responseValue(presign, "id");
+        const uploadResponse = await fetch(responseValue(presign, "uploadUrl"), {
+          method: "PUT",
+          headers: { "Content-Type": "image/jpeg" },
+          body: output,
+        });
+        if (!uploadResponse.ok) throw new Error("invalid_output");
+        const completeResponse = await fetch(
+          manager.dataset.avatarCompleteUrlTemplate.replace("{id}", encodeURIComponent(avatarId)),
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" },
+            body: new URLSearchParams({ csrfToken }),
+          }
+        );
+        const completed = await completeResponse.json();
+        if (!completeResponse.ok || !responseValue(completed, "success")) {
+          throw new Error(responseValue(completed, "code") || "generic");
+        }
+        const avatarUrl = responseValue(completed, "url");
+        updateCurrentAvatar(avatarUrl);
+        setStatus(manager.dataset.avatarSaved, true);
+        closeEditor();
+        refreshAvatarPanel();
+      } catch (error) {
+        setStatus(messageForCode(error.message));
+      } finally {
+        saveButton.disabled = false;
+        cancelButton.disabled = false;
+      }
+    };
+    const removeAvatar = async () => {
+      if (!window.confirm(manager.dataset.avatarRemoveConfirm)) return;
+      removeButton.disabled = true;
+      setStatus(manager.dataset.avatarUploading);
+      try {
+        const response = await fetch(manager.dataset.avatarRemoveUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" },
+          body: new URLSearchParams({ csrfToken: manager.dataset.avatarCsrfToken }),
+        });
+        const result = await response.json();
+        if (!response.ok || !responseValue(result, "success")) {
+          throw new Error(responseValue(result, "code") || "generic");
+        }
+        updateCurrentAvatar("");
+        setStatus(manager.dataset.avatarRemoved, true);
+        refreshAvatarPanel();
+      } catch (error) {
+        setStatus(messageForCode(error.message));
+        removeButton.disabled = false;
+      }
+    };
+
+    fileInput?.addEventListener("change", () => {
+      const file = fileInput.files?.[0];
+      if (file) loadSource(file);
+    });
+    zoomInput?.addEventListener("input", () => {
+      zoom = Number(zoomInput.value) || 1;
+      renderCrop();
+    });
+    stage?.addEventListener("pointerdown", (event) => {
+      if (editor.hidden) return;
+      dragState = { pointerId: event.pointerId, x: event.clientX, y: event.clientY };
+      stage.setPointerCapture?.(event.pointerId);
+      stage.classList.add("dragging");
+    });
+    stage?.addEventListener("pointermove", (event) => {
+      if (!dragState || dragState.pointerId !== event.pointerId) return;
+      offsetX += event.clientX - dragState.x;
+      offsetY += event.clientY - dragState.y;
+      dragState.x = event.clientX;
+      dragState.y = event.clientY;
+      renderCrop();
+    });
+    const finishDrag = (event) => {
+      if (!dragState || dragState.pointerId !== event.pointerId) return;
+      dragState = null;
+      stage.classList.remove("dragging");
+    };
+    stage?.addEventListener("pointerup", finishDrag);
+    stage?.addEventListener("pointercancel", finishDrag);
+    stage?.addEventListener("keydown", (event) => {
+      const movement = event.shiftKey ? 15 : 5;
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeEditor();
+      } else if (event.key === "+" || event.key === "=") {
+        event.preventDefault();
+        zoom = Math.min(3, zoom + 0.1);
+        zoomInput.value = String(zoom);
+        renderCrop();
+      } else if (event.key === "-") {
+        event.preventDefault();
+        zoom = Math.max(1, zoom - 0.1);
+        zoomInput.value = String(zoom);
+        renderCrop();
+      } else if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) {
+        event.preventDefault();
+        if (event.key === "ArrowLeft") offsetX -= movement;
+        if (event.key === "ArrowRight") offsetX += movement;
+        if (event.key === "ArrowUp") offsetY -= movement;
+        if (event.key === "ArrowDown") offsetY += movement;
+        renderCrop();
+      }
+    });
+    cancelButton?.addEventListener("click", closeEditor);
+    saveButton?.addEventListener("click", uploadCrop);
+    removeButton?.addEventListener("click", removeAvatar);
+  };
+
   const updateWorkspaceNavigation = (root) => {
     const workspaceMain = root.matches?.("[data-workspace-page]")
       ? root
@@ -472,6 +815,7 @@
     initWorkspaceBoard(root);
     initCardDetails(root);
     initAttachments(root);
+    initAvatarManager(root);
     updateWorkspaceNavigation(root);
   };
 

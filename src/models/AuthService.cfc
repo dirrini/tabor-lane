@@ -27,8 +27,8 @@ component singleton {
 		}
 
 		var hasInvitation = invitation.found ?: false;
-		var userId = lCase( createUUID() );
-		var workspaceId = hasInvitation ? invitation.workspaceId : lCase( createUUID() );
+		var userId = canonicalUuid( createUUID() );
+		var workspaceId = hasInvitation ? invitation.workspaceId : canonicalUuid( createUUID() );
 		var workspaceDisplayName = hasInvitation ? invitation.workspaceName : trim( arguments.workspaceName );
 		var workspaceRole = hasInvitation ? invitation.role : "owner";
 
@@ -69,6 +69,12 @@ component singleton {
 					locale = arguments.locale
 				);
 			}
+			queryExecute(
+				"UPDATE app_user
+				 SET last_workspace_id=CAST(:workspaceId AS UUID)
+				 WHERE id=CAST(:userId AS UUID)",
+				{ workspaceId=workspaceId, userId=userId }
+			);
 		}
 
 		var user = {
@@ -101,7 +107,8 @@ component singleton {
 			 JOIN workspace_member wm ON wm.user_id = u.id
 			 JOIN workspace w ON w.id = wm.workspace_id
 			 WHERE u.email = :email
-			 ORDER BY wm.created_at
+			 ORDER BY CASE WHEN w.id=u.last_workspace_id THEN 0 ELSE 1 END,
+			          wm.created_at,w.id
 			 LIMIT 1",
 			{ email = lCase( trim( arguments.email ) ) },
 			{ returntype = "array" }
@@ -129,7 +136,8 @@ component singleton {
 			 JOIN workspace w ON w.id = wm.workspace_id
 			 WHERE ei.provider = :provider
 			   AND ei.provider_subject = :subject
-			 ORDER BY wm.created_at
+			 ORDER BY CASE WHEN w.id=u.last_workspace_id THEN 0 ELSE 1 END,
+			          wm.created_at,w.id
 			 LIMIT 1",
 			{ provider = arguments.provider, subject = arguments.subject },
 			{ returntype = "array" }
@@ -202,6 +210,55 @@ component singleton {
 		return { success = true, user = loadUser( users[ 1 ].id ) };
 	}
 
+	struct function resolveWorkspaceContext(
+		required string userId,
+		string currentWorkspaceId = ""
+	){
+		var rows = queryExecute(
+			"SELECT CAST(w.id AS TEXT) AS workspace_id,w.name AS workspace_name,wm.role,w.plan,
+			        (w.id=u.last_workspace_id) AS is_last_workspace
+			 FROM app_user u
+			 JOIN workspace_member wm ON wm.user_id=u.id
+			 JOIN workspace w ON w.id=wm.workspace_id
+			 WHERE u.id=CAST(:userId AS UUID)
+			 ORDER BY
+			   CASE
+			     WHEN :currentWorkspaceId<>'' AND CAST(w.id AS TEXT)=:currentWorkspaceId THEN 0
+			     WHEN w.id=u.last_workspace_id THEN 1
+			     ELSE 2
+			   END,
+			   wm.created_at,w.id
+			 LIMIT 1",
+			{
+				userId=arguments.userId,
+				currentWorkspaceId=trim( arguments.currentWorkspaceId )
+			},
+			{ returntype="array" }
+		);
+		if ( !rows.len() ) return { found=false };
+
+		var selected = rows[ 1 ];
+		if ( !selected.is_last_workspace ) {
+			queryExecute(
+				"UPDATE app_user
+				 SET last_workspace_id=CAST(:workspaceId AS UUID)
+				 WHERE id=CAST(:userId AS UUID)
+				   AND last_workspace_id IS DISTINCT FROM CAST(:workspaceId AS UUID)",
+				{
+					workspaceId=selected.workspace_id,
+					userId=arguments.userId
+				}
+			);
+		}
+		return {
+			found=true,
+			workspaceId=selected.workspace_id,
+			workspaceName=selected.workspace_name,
+			role=selected.role,
+			plan=selected.plan
+		};
+	}
+
 	struct function registerExternal(
 		required string provider,
 		required string subject,
@@ -235,8 +292,8 @@ component singleton {
 		}
 
 		var hasInvitation = invitation.found ?: false;
-		var userId = lCase( createUUID() );
-		var workspaceId = hasInvitation ? invitation.workspaceId : lCase( createUUID() );
+		var userId = canonicalUuid( createUUID() );
+		var workspaceId = hasInvitation ? invitation.workspaceId : canonicalUuid( createUUID() );
 		var workspaceDisplayName = hasInvitation ? invitation.workspaceName : trim( arguments.workspaceName );
 		var workspaceRole = hasInvitation ? invitation.role : "owner";
 
@@ -286,6 +343,12 @@ component singleton {
 						locale = arguments.locale
 					);
 				}
+				queryExecute(
+					"UPDATE app_user
+					 SET last_workspace_id=CAST(:workspaceId AS UUID)
+					 WHERE id=CAST(:userId AS UUID)",
+					{ workspaceId=workspaceId, userId=userId }
+				);
 			}
 		} catch ( database exception ) {
 			var raced = authenticateExternal(
@@ -502,14 +565,19 @@ component singleton {
 		required string workspaceName,
 		required string locale
 	){
-		var boardId = lCase( createUUID() );
+		var boardId = canonicalUuid( createUUID() );
 		var slugBase = reReplace( lCase( trim( arguments.workspaceName ) ), "[^a-z0-9]+", "-", "all" );
 		slugBase = reReplace( slugBase, "^-|-$", "", "all" );
 		if ( !slugBase.len() ) {
 			slugBase = "workspace";
 		}
 		var workspaceSlug = left( slugBase, 80 ) & "-" & left( replace( arguments.workspaceId, "-", "", "all" ), 8 );
-		var columnIds = [ lCase( createUUID() ), lCase( createUUID() ), lCase( createUUID() ), lCase( createUUID() ) ];
+		var columnIds = [
+			canonicalUuid( createUUID() ),
+			canonicalUuid( createUUID() ),
+			canonicalUuid( createUUID() ),
+			canonicalUuid( createUUID() )
+		];
 		var columnNames = arguments.locale == "pt_BR"
 			? [ "Ideias", "A fazer", "Em andamento", "Concluído" ]
 			: [ "Ideas", "To do", "In progress", "Done" ];
@@ -615,7 +683,8 @@ component singleton {
 			 JOIN workspace_member wm ON wm.user_id = u.id
 			 JOIN workspace w ON w.id = wm.workspace_id
 			 WHERE u.id = CAST(:userId AS UUID)
-			 ORDER BY wm.created_at
+			 ORDER BY CASE WHEN w.id=u.last_workspace_id THEN 0 ELSE 1 END,
+			          wm.created_at,w.id
 			 LIMIT 1",
 			{ userId = arguments.userId },
 			{ returntype = "array" }
@@ -630,6 +699,18 @@ component singleton {
 			{ returntype = "array" }
 		);
 		return result[ 1 ].found;
+	}
+
+	private string function canonicalUuid( required string value ){
+		var compact = lCase( replace( arguments.value, "-", "", "all" ) );
+		if ( !reFind( "^[0-9a-f]{32}$", compact ) ) {
+			throw( type="Auth.InvalidUuid", message="Could not generate a valid UUID." );
+		}
+		return left( compact, 8 )
+			& "-" & mid( compact, 9, 4 )
+			& "-" & mid( compact, 13, 4 )
+			& "-" & mid( compact, 17, 4 )
+			& "-" & right( compact, 12 );
 	}
 
 }

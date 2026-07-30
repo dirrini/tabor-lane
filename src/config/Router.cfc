@@ -10,8 +10,13 @@ component {
         route( "/app/billing/status" ).to( "Billing.status" );
         route( "/app/billing" ).to( "Billing.index" );
         post( "/app/profile/password" ).to( "Profile.changePassword" );
+        post( "/app/profile/avatar/remove" ).to( "Avatars.remove" );
+        post( "/app/profile/avatar/:avatarId/complete" ).to( "Avatars.complete" );
+        post( "/app/profile/avatar/presign" ).to( "Avatars.presign" );
         post( "/app/profile/details" ).to( "Profile.update" );
         route( "/app/profile" ).to( "Profile.index" );
+        post( "/app/workspaces/:workspaceId/select" ).to( "Workspaces.select" );
+        get( "/app/users/:userId/avatar" ).to( "Avatars.image" );
         post( "/app/my-work/cards/:cardId" ).to( "MyWork.updateCard" );
         get( "/app/my-work" ).to( "MyWork.index" );
         post( "/app/members/invite" ).to( "App.inviteMember" );

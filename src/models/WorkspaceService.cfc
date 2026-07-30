@@ -1,20 +1,71 @@
 component singleton {
 
 	property name="tokenService" inject="TokenService";
+	property name="avatarService" inject="AvatarService";
+
+	array function getUserWorkspaces( required string userId ){
+		return queryExecute(
+			"SELECT CAST(w.id AS TEXT) AS id,w.name,w.slug,w.plan,wm.role,
+			        (w.id=u.last_workspace_id) AS is_last_workspace
+			 FROM app_user u
+			 JOIN workspace_member wm ON wm.user_id=u.id
+			 JOIN workspace w ON w.id=wm.workspace_id
+			 WHERE u.id=CAST(:userId AS UUID)
+			 ORDER BY CASE WHEN w.id=u.last_workspace_id THEN 0 ELSE 1 END,
+			          wm.created_at,w.name,w.id",
+			{ userId=arguments.userId },
+			{ returntype="array" }
+		);
+	}
+
+	struct function activateWorkspace( required string userId, required string workspaceId ){
+		var rows = queryExecute(
+			"UPDATE app_user user_account
+			 SET last_workspace_id=selection.workspace_id
+			 FROM (
+			    SELECT wm.user_id,wm.workspace_id,wm.role,w.name,w.plan
+			    FROM workspace_member wm
+			    JOIN workspace w ON w.id=wm.workspace_id
+			    WHERE wm.user_id=CAST(:userId AS UUID)
+			      AND wm.workspace_id=CAST(:workspaceId AS UUID)
+			 ) selection
+			 WHERE user_account.id=selection.user_id
+			 RETURNING CAST(selection.workspace_id AS TEXT) AS workspace_id,
+			           selection.name AS workspace_name,selection.role,selection.plan",
+			{ userId=arguments.userId, workspaceId=arguments.workspaceId },
+			{ returntype="array" }
+		);
+		return rows.len()
+			? {
+				success=true,
+				workspaceId=rows[ 1 ].workspace_id,
+				workspaceName=rows[ 1 ].workspace_name,
+				role=rows[ 1 ].role,
+				plan=rows[ 1 ].plan
+			}
+			: { success=false, code="forbidden" };
+	}
 
 	array function getMembers( required string userId, required string workspaceId ){
 		assertMember( arguments.userId, arguments.workspaceId );
-		return queryExecute(
+		var members = queryExecute(
 			"SELECT CAST(u.id AS TEXT) AS id, u.display_name, u.email, wm.role,
-			        u.email_verified_at, wm.created_at
+			        u.email_verified_at, wm.created_at,CAST(avatar.id AS TEXT) AS avatar_id
 			 FROM workspace_member wm
 			 JOIN app_user u ON u.id = wm.user_id
+			 LEFT JOIN user_avatar avatar
+			   ON avatar.user_id=u.id
+			  AND avatar.status='available' AND avatar.deleted_at IS NULL
 			 WHERE wm.workspace_id = CAST(:workspaceId AS UUID)
 			 ORDER BY CASE wm.role WHEN 'owner' THEN 1 WHEN 'admin' THEN 2 ELSE 3 END,
 			          u.display_name",
 			{ workspaceId = arguments.workspaceId },
 			{ returntype = "array" }
 		);
+		for ( var member in members ) {
+			member.initials = avatarService.initials( member.display_name );
+		}
+		return members;
 	}
 
 	array function getPendingInvitations( required string userId, required string workspaceId ){
@@ -144,34 +195,86 @@ component singleton {
 		required string userId,
 		required string userEmail
 	){
-		var invitation = inspectInvitation( arguments.token );
-		if ( !invitation.found || lCase( invitation.email ) != lCase( arguments.userEmail ) ) {
-			return { success = false, code = "invalid_invitation" };
-		}
+		var outcome = { success = false, code = "invalid_invitation" };
+		var tokenHash = tokenService.hashToken( arguments.token );
+		var normalizedEmail = lCase( trim( arguments.userEmail ) );
 		transaction {
-			queryExecute(
-				"INSERT INTO workspace_member (workspace_id, user_id, role)
-				 VALUES (CAST(:workspaceId AS UUID), CAST(:userId AS UUID), :role)
-				 ON CONFLICT (workspace_id, user_id) DO NOTHING",
+			var invitations = queryExecute(
+				"SELECT CAST(invitation.id AS TEXT) AS id,invitation.email,invitation.role,
+				        CAST(invitation.workspace_id AS TEXT) AS workspace_id,
+				        workspace.name AS workspace_name,user_account.email AS user_email
+				 FROM workspace_invitation invitation
+				 JOIN workspace ON workspace.id=invitation.workspace_id
+				 JOIN app_user user_account ON user_account.id=CAST(:userId AS UUID)
+				 WHERE invitation.token_hash=:tokenHash
+				   AND invitation.accepted_at IS NULL
+				   AND invitation.expires_at>now()
+				 FOR UPDATE OF invitation",
 				{
-					workspaceId = invitation.workspaceId,
 					userId = arguments.userId,
-					role = invitation.role
+					tokenHash = tokenHash
+				},
+				{ returntype = "array" }
+			);
+			if (
+				invitations.len()
+				&& lCase( invitations[ 1 ].email ) == normalizedEmail
+				&& lCase( invitations[ 1 ].user_email ) == normalizedEmail
+			) {
+				var invitation = invitations[ 1 ];
+				var consumed = queryExecute(
+					"UPDATE workspace_invitation
+					 SET accepted_at=now()
+					 WHERE id=CAST(:invitationId AS UUID)
+					   AND accepted_at IS NULL
+					   AND expires_at>now()
+					 RETURNING id",
+					{ invitationId = invitation.id },
+					{ returntype = "array" }
+				);
+				if ( consumed.len() ) {
+					queryExecute(
+						"INSERT INTO workspace_member (workspace_id, user_id, role)
+						 VALUES (CAST(:workspaceId AS UUID), CAST(:userId AS UUID), :role)
+						 ON CONFLICT (workspace_id, user_id) DO NOTHING",
+						{
+							workspaceId = invitation.workspace_id,
+							userId = arguments.userId,
+							role = invitation.role
+						}
+					);
+					var effectiveMembership = queryExecute(
+						"SELECT role
+						 FROM workspace_member
+						 WHERE workspace_id=CAST(:workspaceId AS UUID)
+						   AND user_id=CAST(:userId AS UUID)",
+						{
+							workspaceId = invitation.workspace_id,
+							userId = arguments.userId
+						},
+						{ returntype = "array" }
+					);
+					if ( effectiveMembership.len() ) {
+						queryExecute(
+							"UPDATE app_user
+							 SET last_workspace_id=CAST(:workspaceId AS UUID)
+							 WHERE id=CAST(:userId AS UUID)",
+							{
+								workspaceId = invitation.workspace_id,
+								userId = arguments.userId
+							}
+						);
+						outcome = {
+							success = true,
+							workspaceId = invitation.workspace_id,
+							workspaceName = invitation.workspace_name,
+							role = effectiveMembership[ 1 ].role
+						};
+					}
 				}
-			);
-			queryExecute(
-				"UPDATE workspace_invitation
-				 SET accepted_at = now()
-				 WHERE token_hash = :tokenHash AND accepted_at IS NULL",
-				{ tokenHash = tokenService.hashToken( arguments.token ) }
-			);
+			}
 		}
-		return {
-			success = true,
-			workspaceId = invitation.workspaceId,
-			workspaceName = invitation.workspaceName,
-			role = invitation.role
-		};
+		return outcome;
 	}
 
 	private void function assertMember( required string userId, required string workspaceId ){

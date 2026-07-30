@@ -80,7 +80,7 @@
                 <div class="card-comment-list">
                     <cfif !prc.cardDetails.comments.len()><p class="card-empty-copy">#$r( "card.noComments" )#</p></cfif>
                     <cfloop array="#prc.cardDetails.comments#" item="comment">
-                        <article class="card-comment"><span class="workspace-avatar account-avatar">#encodeForHTML( left( comment.author_name, 1 ) )#</span><div><strong>#encodeForHTML( comment.author_name )#</strong><time>#encodeForHTML( dateTimeFormat( comment.created_at, dateMask ) )#</time><p>#encodeForHTML( comment.body )#</p></div></article>
+                        <article class="card-comment"><span class="user-avatar account-avatar"><span>#encodeForHTML( comment.author_initials )#</span><cfif len( comment.author_avatar_id ?: "" )><img src="/app/users/#encodeForURL( comment.author_id )#/avatar?v=#encodeForURL( comment.author_avatar_id )#" alt=""></cfif></span><div><strong>#encodeForHTML( comment.author_name )#</strong><time>#encodeForHTML( dateTimeFormat( comment.created_at, dateMask ) )#</time><p>#encodeForHTML( comment.body )#</p></div></article>
                     </cfloop>
                 </div>
             </section>

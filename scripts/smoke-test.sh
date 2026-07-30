@@ -248,6 +248,9 @@ grep --quiet "added an attachment" "$card_html"
 grep --quiet 'id="card-attachments" class="card-panel"' "$card_html"
 grep --quiet 'target="_blank" rel="noopener"' "$card_html"
 grep --quiet 'hx-target="#card-attachments"' "$card_html"
+curl --fail --silent --show-error --cookie "$cookie_jar" "$base_url/app" > "$app_html"
+grep --quiet 'data-card-attachments' "$app_html"
+grep --quiet "ci-attachment.txt" "$app_html"
 
 curl --fail --silent --show-error --location --cookie "$cookie_jar" \
   "$base_url/app/attachments/$attachment_id/download" > "$attachment_download"
@@ -267,6 +270,11 @@ if grep --quiet "ci-attachment.txt" "$card_html"; then
   exit 1
 fi
 grep --quiet "removed an attachment" "$card_html"
+curl --fail --silent --show-error --cookie "$cookie_jar" "$base_url/app" > "$app_html"
+if grep --quiet "ci-attachment.txt" "$app_html"; then
+  echo "Removed attachment remained visible in the board tooltip" >&2
+  exit 1
+fi
 
 card_archive_status="$(
   curl --silent --show-error --output /dev/null --write-out '%{http_code}' \

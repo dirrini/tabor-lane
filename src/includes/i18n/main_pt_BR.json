@@ -345,5 +345,6 @@
   "profile.subscription.manage": "Gerencie seu plano Premium",
   "profile.subscription.stripe": "O Tabor Lane não armazena dados sensíveis de pagamento. O checkout e a gestão da assinatura são processados com segurança pelo Stripe.",
   "app.menu.open": "Abrir menu do workspace",
-  "app.menu.close": "Fechar menu do workspace"
+  "app.menu.close": "Fechar menu do workspace",
+  "app.card.attachments": "Anexos"
 }

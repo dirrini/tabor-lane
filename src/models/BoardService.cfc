@@ -29,9 +29,17 @@ component singleton {
 		var cards = queryExecute(
 			"SELECT CAST(c.id AS TEXT) AS id, CAST(c.column_id AS TEXT) AS column_id,
 			        c.title, c.description, c.priority, array_to_string(c.labels, ',') AS labels_csv, c.due_at, c.position,
-			        c.version, c.created_at, u.display_name AS assignee_name
+			        c.version, c.created_at, u.display_name AS assignee_name,
+			        COALESCE(att.attachment_count, 0) AS attachment_count,
+			        COALESCE(att.attachment_names, '') AS attachment_names
 			 FROM card c
 			 LEFT JOIN app_user u ON u.id = c.assignee_id
+			 LEFT JOIN LATERAL (
+			     SELECT COUNT(*) AS attachment_count,
+			            string_agg(a.original_filename, CHR(10) ORDER BY a.created_at) AS attachment_names
+			     FROM attachment a
+			     WHERE a.card_id = c.id AND a.status = 'available' AND a.deleted_at IS NULL
+			 ) att ON true
 			 WHERE c.board_id = CAST(:boardId AS UUID) AND c.archived_at IS NULL
 			 ORDER BY c.column_id, c.position, c.created_at",
 			{ boardId = boards[ 1 ].id },

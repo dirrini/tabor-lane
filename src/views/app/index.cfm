@@ -44,7 +44,21 @@
                                     <h3><a href="/app/cards/#encodeForURL(card.id)#" hx-get="/app/cards/#encodeForURL(card.id)#" hx-target="##workspace-main" hx-select="##workspace-main" hx-swap="outerHTML" hx-push-url="true">#encodeForHTML( card.title )#</a></h3>
                                     <cfif len( trim( card.description ?: "" ) )><p>#encodeForHTML( card.description )#</p></cfif>
                                     <cfif len( card.labels_csv ?: "" )><div class="card-labels"><cfloop list="#card.labels_csv#" item="label"><span>#encodeForHTML( label )#</span></cfloop></div></cfif>
-                                    <div class="card-meta"><span><cfif !isNull( card.due_at )><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##clock"></use></svg> #encodeForHTML( dateFormat( card.due_at, getFWLocale() == "pt_BR" ? "dd/MM" : "mmm d" ) )#</cfif></span><cfif len( card.assignee_name ?: "" )><i class="avatar account-avatar" title="#encodeForHTMLAttribute( card.assignee_name )#">#encodeForHTML( left( card.assignee_name, 1 ) )#</i></cfif></div>
+                                    <div class="card-meta">
+                                        <span class="card-meta-items">
+                                            <cfif !isNull( card.due_at )><span><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##clock"></use></svg> #encodeForHTML( dateFormat( card.due_at, getFWLocale() == "pt_BR" ? "dd/MM" : "mmm d" ) )#</span></cfif>
+                                            <cfif val( card.attachment_count ?: 0 )>
+                                                <span class="card-attachment-indicator" tabindex="0" aria-describedby="card-attachments-#encodeForHTMLAttribute( card.id )#" data-card-attachments>
+                                                    <svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##paperclip"></use></svg>
+                                                    <span class="card-attachment-tooltip" id="card-attachments-#encodeForHTMLAttribute( card.id )#" role="tooltip">
+                                                        <strong>#$r( "app.card.attachments" )#</strong>
+                                                        <cfloop list="#card.attachment_names#" delimiters="#chr( 10 )#" item="attachmentName"><span>#encodeForHTML( attachmentName )#</span></cfloop>
+                                                    </span>
+                                                </span>
+                                            </cfif>
+                                        </span>
+                                        <cfif len( card.assignee_name ?: "" )><i class="avatar account-avatar" title="#encodeForHTMLAttribute( card.assignee_name )#">#encodeForHTML( left( card.assignee_name, 1 ) )#</i></cfif>
+                                    </div>
                                 </article>
                             </cfloop>
                             <p class="column-empty" data-column-empty #column.cards.len() ? "hidden" : ""#>#$r( "app.column.empty" )#</p>

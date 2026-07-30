@@ -345,5 +345,6 @@
   "profile.subscription.manage": "Manage your Premium plan",
   "profile.subscription.stripe": "Tabor Lane does not store sensitive payment data. Checkout and subscription management are securely handled by Stripe.",
   "app.menu.open": "Open workspace menu",
-  "app.menu.close": "Close workspace menu"
+  "app.menu.close": "Close workspace menu",
+  "app.card.attachments": "Attachments"
 }

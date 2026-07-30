@@ -11,6 +11,10 @@ component {
         index = "GET",
         createCard = "POST",
         moveCard = "POST",
+        cardDetails = "GET",
+        updateCard = "POST",
+        addCardComment = "POST",
+        archiveCard = "POST",
         members = "GET",
         inviteMember = "POST"
     };
@@ -94,6 +98,56 @@ component {
             );
         }
         relocate( uri = "/app" );
+    }
+
+    function cardDetails( event, rc, prc ) {
+        prc.page = "app";
+        prc.cardDetails = boardService.getCardDetails( prc.auth.id, prc.auth.workspaceId, rc.cardId ?: "" );
+        if ( !prc.cardDetails.found ) relocate( uri="/app" );
+        prc.pageTitle = prc.cardDetails.card.title;
+        prc.cardCsrfToken = csrfGenerateToken( "card-write" );
+        prc.logoutCsrfToken = csrfGenerateToken( "logout" );
+        prc.canEditCard = prc.cardDetails.card.access_role != "viewer";
+        prc.notice = ( rc.updated ?: "" ) == "1"
+            ? "saved"
+            : ( rc.commented ?: "" ) == "1" ? "commented" : "";
+        prc.error = rc.error ?: "";
+        workspaceViewService.render( event, prc, "app/card" );
+    }
+
+    function updateCard( event, rc, prc ) {
+        if (
+            !csrfVerifyToken( rc.csrfToken ?: "", "card-write" )
+            || !trim( rc.title ?: "" ).len()
+            || trim( rc.title ?: "" ).len() > 255
+            || ( trim( rc.dueDate ?: "" ).len() && !isValid( "date", rc.dueDate ) )
+        ) {
+            relocate( uri="/app/cards/#rc.cardId#?error=invalid" );
+        }
+        var result = boardService.updateCard( prc.auth.id, prc.auth.workspaceId, rc.cardId, rc );
+        var redirectQuery = result.success
+            ? "updated=1"
+            : "error=" & urlEncodedFormat( result.code ?: "generic" );
+        relocate( uri="/app/cards/#rc.cardId#?#redirectQuery#" );
+    }
+
+    function addCardComment( event, rc, prc ) {
+        if ( !csrfVerifyToken( rc.csrfToken ?: "", "card-write" ) ) {
+            relocate( uri="/app/cards/#rc.cardId#?error=expired" );
+        }
+        var result = boardService.addComment( prc.auth.id, prc.auth.workspaceId, rc.cardId, rc.body ?: "" );
+        var redirectQuery = result.success
+            ? "commented=1"
+            : "error=" & urlEncodedFormat( result.code ?: "generic" );
+        relocate( uri="/app/cards/#rc.cardId#?#redirectQuery#" );
+    }
+
+    function archiveCard( event, rc, prc ) {
+        if ( !csrfVerifyToken( rc.csrfToken ?: "", "card-write" ) ) {
+            relocate( uri="/app/cards/#rc.cardId#?error=expired" );
+        }
+        var result = boardService.archiveCard( prc.auth.id, prc.auth.workspaceId, rc.cardId );
+        relocate( uri=result.success ? "/app?cardArchived=1" : "/app/cards/#rc.cardId#?error=#urlEncodedFormat( result.code ?: "generic" )#" );
     }
 
     function moveCard( event, rc, prc ) {

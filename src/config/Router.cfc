@@ -14,7 +14,11 @@ component {
         route( "/app/profile" ).to( "Profile.index" );
         post( "/app/members/invite" ).to( "App.inviteMember" );
         route( "/app/members" ).to( "App.members" );
+        post( "/app/cards/:cardId/comments" ).to( "App.addCardComment" );
+        post( "/app/cards/:cardId/archive" ).to( "App.archiveCard" );
         post( "/app/cards/:cardId/move" ).to( "App.moveCard" );
+        post( "/app/cards/:cardId" ).to( "App.updateCard" );
+        get( "/app/cards/:cardId" ).to( "App.cardDetails" );
         post( "/app/cards" ).to( "App.createCard" );
         route( "/app" ).to( "App.index" );
         post( "/auth/logout" ).to( "Auth.logout" );

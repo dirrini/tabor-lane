@@ -10,12 +10,13 @@ check_email_html="$(mktemp)"
 members_html="$(mktemp)"
 billing_html="$(mktemp)"
 profile_html="$(mktemp)"
+card_html="$(mktemp)"
 partial_html="$(mktemp)"
 history_restore_html="$(mktemp)"
 invitation_html="$(mktemp)"
 member_cookie_jar="$(mktemp)"
 member_signup_html="$(mktemp)"
-trap 'rm -f "$cookie_jar" "$signup_html" "$app_html" "$check_email_html" "$members_html" "$billing_html" "$profile_html" "$partial_html" "$history_restore_html" "$invitation_html" "$member_cookie_jar" "$member_signup_html"' EXIT
+trap 'rm -f "$cookie_jar" "$signup_html" "$app_html" "$check_email_html" "$members_html" "$billing_html" "$profile_html" "$card_html" "$partial_html" "$history_restore_html" "$invitation_html" "$member_cookie_jar" "$member_signup_html"' EXIT
 
 curl --fail --silent --show-error --cookie-jar "$cookie_jar" "$base_url/signup" > "$signup_html"
 csrf_token="$(sed -n 's/.*name="csrfToken" value="\([^"]*\)".*/\1/p' "$signup_html" | head -1)"
@@ -135,7 +136,10 @@ move_response="$(
     --data-urlencode "csrfToken=$csrf_token" \
     --data-urlencode "columnId=$target_column_id"
 )"
-printf '%s' "$move_response" | grep --quiet '"success":true'
+if ! printf '%s' "$move_response" | grep --quiet -E '"(success|SUCCESS)"[[:space:]]*:[[:space:]]*true'; then
+  echo "Unexpected card movement response: $move_response" >&2
+  exit 1
+fi
 
 create_status="$(
   curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
@@ -150,6 +154,68 @@ test "$create_status" = "302"
 
 curl --fail --silent --show-error --cookie "$cookie_jar" "$base_url/app" > "$app_html"
 grep --quiet "CI live card" "$app_html"
+managed_card_id="$(grep --before-context=1 "CI live card" "$app_html" | grep -o 'data-card-id="[^"]*"' | tail -1 | cut -d'"' -f2)"
+test -n "$managed_card_id"
+
+curl --fail --silent --show-error --cookie "$cookie_jar" \
+  "$base_url/app/cards/$managed_card_id" > "$card_html"
+grep --quiet "Card details" "$card_html"
+card_csrf_token="$(sed -n 's/.*data-card-csrf-token="\([^"]*\)".*/\1/p' "$card_html" | head -1)"
+test -n "$card_csrf_token"
+
+card_update_result="$(
+  curl --silent --show-error --output /dev/null --write-out '%{http_code}|%{redirect_url}' \
+    --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+    --request POST "$base_url/app/cards/$managed_card_id" \
+    --data-urlencode "csrfToken=$card_csrf_token" \
+    --data-urlencode "title=CI managed card" \
+    --data-urlencode "description=Updated through card management" \
+    --data-urlencode "priority=high" \
+    --data-urlencode "assigneeId=" \
+    --data-urlencode "dueDate=2026-12-31" \
+    --data-urlencode "labels=ci, regression"
+)"
+if [[ "$card_update_result" != 302*"updated=1" ]]; then
+  echo "Unexpected card update redirect: $card_update_result" >&2
+  exit 1
+fi
+
+curl --fail --silent --show-error --cookie "$cookie_jar" \
+  "$base_url/app/cards/$managed_card_id?updated=1" > "$card_html"
+if ! grep --quiet "CI managed card" "$card_html"; then
+  echo "Updated card title was not rendered" >&2
+  grep 'name="title"' "$card_html" >&2 || true
+  exit 1
+fi
+grep --quiet "Updated through card management" "$card_html"
+grep --quiet 'value="ci,regression"' "$card_html"
+grep --quiet "updated the card" "$card_html"
+
+card_comment_status="$(
+  curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+    --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+    --request POST "$base_url/app/cards/$managed_card_id/comments" \
+    --data-urlencode "csrfToken=$card_csrf_token" \
+    --data-urlencode "body=CI management comment"
+)"
+test "$card_comment_status" = "302"
+curl --fail --silent --show-error --cookie "$cookie_jar" \
+  "$base_url/app/cards/$managed_card_id?commented=1" > "$card_html"
+grep --quiet "CI management comment" "$card_html"
+grep --quiet "added a comment" "$card_html"
+
+card_archive_status="$(
+  curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+    --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+    --request POST "$base_url/app/cards/$managed_card_id/archive" \
+    --data-urlencode "csrfToken=$card_csrf_token"
+)"
+test "$card_archive_status" = "302"
+curl --fail --silent --show-error --cookie "$cookie_jar" "$base_url/app" > "$app_html"
+if grep --quiet "CI managed card" "$app_html"; then
+  echo "Archived card remained visible on the active board" >&2
+  exit 1
+fi
 
 curl --fail --silent --show-error --cookie "$cookie_jar" "$base_url/app/members" > "$members_html"
 invite_csrf_token="$(
@@ -212,5 +278,13 @@ curl --fail --silent --show-error --cookie "$member_cookie_jar" --cookie-jar "$m
 curl --fail --silent --show-error --cookie "$member_cookie_jar" "$base_url/app" > "$app_html"
 grep --quiet "CI Workspace" "$app_html"
 grep --quiet "member" "$app_html"
+
+curl --fail --silent --show-error --location \
+  --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+  "$base_url/locale/pt_BR" > /dev/null
+curl --fail --silent --show-error --cookie "$cookie_jar" \
+  "$base_url/app/cards/$card_id" > "$card_html"
+grep --quiet "Detalhes do card" "$card_html"
+grep --quiet "Prioridade" "$card_html"
 
 echo "Functional smoke test passed"

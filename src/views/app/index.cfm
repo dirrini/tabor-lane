@@ -11,13 +11,13 @@
                 </div>
                 <div>
                     <span class="avatar account-avatar">#encodeForHTML( left( prc.auth.displayName, 1 ) )#</span>
-                    <button class="button button-primary button-small" type="button" data-card-form-toggle>
+                    <cfif prc.workspaceBoard.board.role != "viewer"><button class="button button-primary button-small" type="button" data-card-form-toggle>
                         <svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##plus"></use></svg> #$r( "app.newCard" )#
-                    </button>
+                    </button></cfif>
                 </div>
             </header>
 
-            <form class="quick-card-form" method="post" action="/app/cards" data-card-form hidden>
+            <cfif prc.workspaceBoard.board.role != "viewer"><form class="quick-card-form" method="post" action="/app/cards" data-card-form hidden>
                 <input type="hidden" name="csrfToken" value="#encodeForHTMLAttribute( prc.cardCsrfToken )#">
                 <label><span>#$r( "app.card.title" )#</span><input name="title" type="text" required maxlength="255" placeholder="#encodeForHTMLAttribute( $r( 'app.card.titlePlaceholder' ) )#"></label>
                 <label><span>#$r( "app.card.description" )#</span><input name="description" type="text" maxlength="500" placeholder="#encodeForHTMLAttribute( $r( 'app.card.descriptionPlaceholder' ) )#"></label>
@@ -27,7 +27,7 @@
                     </select>
                 </label>
                 <div><button class="button button-primary button-small" type="submit">#$r( "app.card.create" )#</button><button class="button button-ghost button-small" type="button" data-card-form-cancel>#$r( "app.card.cancel" )#</button></div>
-            </form>
+            </form></cfif>
 
             <div class="workspace-board kanban-grid">
                 <cfloop array="#prc.workspaceBoard.columns#" item="column" index="columnIndex">
@@ -40,10 +40,11 @@
                         </header>
                         <div class="live-card-list" data-card-list>
                             <cfloop array="#column.cards#" item="card">
-                                <article class="demo-card live-card" draggable="true" data-card-id="#encodeForHTMLAttribute( card.id )#">
-                                    <h3>#encodeForHTML( card.title )#</h3>
+                                <article class="demo-card live-card priority-border-#encodeForHTMLAttribute( card.priority )#" draggable="#prc.workspaceBoard.board.role != 'viewer'#" data-card-id="#encodeForHTMLAttribute( card.id )#">
+                                    <h3><a href="/app/cards/#encodeForURL(card.id)#" hx-get="/app/cards/#encodeForURL(card.id)#" hx-target="##workspace-main" hx-select="##workspace-main" hx-swap="outerHTML" hx-push-url="true">#encodeForHTML( card.title )#</a></h3>
                                     <cfif len( trim( card.description ?: "" ) )><p>#encodeForHTML( card.description )#</p></cfif>
-                                    <div class="card-meta"><span><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##more"></use></svg></span><i class="avatar account-avatar">#encodeForHTML( left( prc.auth.displayName, 1 ) )#</i></div>
+                                    <cfif len( card.labels_csv ?: "" )><div class="card-labels"><cfloop list="#card.labels_csv#" item="label"><span>#encodeForHTML( label )#</span></cfloop></div></cfif>
+                                    <div class="card-meta"><span><cfif !isNull( card.due_at )><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##clock"></use></svg> #encodeForHTML( dateFormat( card.due_at, getFWLocale() == "pt_BR" ? "dd/MM" : "mmm d" ) )#</cfif></span><cfif len( card.assignee_name ?: "" )><i class="avatar account-avatar" title="#encodeForHTMLAttribute( card.assignee_name )#">#encodeForHTML( left( card.assignee_name, 1 ) )#</i></cfif></div>
                                 </article>
                             </cfloop>
                             <p class="column-empty" data-column-empty #column.cards.len() ? "hidden" : ""#>#$r( "app.column.empty" )#</p>

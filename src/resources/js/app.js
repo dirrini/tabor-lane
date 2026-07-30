@@ -197,6 +197,17 @@
     });
   };
 
+  const initCardDetails = (root) => {
+    const archiveForm = root.matches?.("[data-card-archive]")
+      ? root
+      : root.querySelector?.("[data-card-archive]");
+    if (!archiveForm || archiveForm.dataset.archiveInitialized) return;
+    archiveForm.dataset.archiveInitialized = "true";
+    archiveForm.addEventListener("submit", (event) => {
+      if (!window.confirm(archiveForm.dataset.confirm)) event.preventDefault();
+    });
+  };
+
   const updateWorkspaceNavigation = (root) => {
     const workspaceMain = root.matches?.("[data-workspace-page]")
       ? root
@@ -224,6 +235,7 @@
   const initDynamicContent = (root) => {
     initPendingBilling(root);
     initWorkspaceBoard(root);
+    initCardDetails(root);
     updateWorkspaceNavigation(root);
   };
 

@@ -120,8 +120,12 @@ component {
     }
 
     function cardDetails( event, rc, prc ) {
-        prc.returnTo = ( rc.returnTo ?: "" ) == "my-work" ? "my-work" : "board";
-        prc.page = prc.returnTo == "my-work" ? "myWork" : "app";
+        prc.returnTo = normalizeCardReturnTo( rc.returnTo ?: "" );
+        prc.analyticsReturnFilters = normalizeAnalyticsReturnFilters( rc );
+        prc.analyticsReturnUrl = buildAnalyticsReturnUrl( prc.analyticsReturnFilters );
+        prc.page = prc.returnTo == "my-work"
+            ? "myWork"
+            : prc.returnTo == "analytics" ? "analytics" : "app";
         prc.cardDetails = boardService.getCardDetails( prc.auth.id, prc.auth.workspaceId, rc.cardId ?: "" );
         if ( !prc.cardDetails.found ) relocate( uri="/app" );
         prc.pageTitle = prc.cardDetails.card.title;
@@ -144,42 +148,54 @@ component {
     }
 
     function updateCard( event, rc, prc ) {
+        var returnTo = normalizeCardReturnTo( rc.returnTo ?: "" );
+        var returnQuery = buildCardReturnQuery( returnTo, rc );
         if (
             !csrfVerifyToken( rc.csrfToken ?: "", "card-write" )
             || !trim( rc.title ?: "" ).len()
             || trim( rc.title ?: "" ).len() > 255
             || ( trim( rc.dueDate ?: "" ).len() && !isValid( "date", rc.dueDate ) )
         ) {
-            relocate( uri="/app/cards/#rc.cardId#?error=invalid" );
+            relocate( uri="/app/cards/#rc.cardId#?error=invalid#returnQuery#" );
         }
         var result = boardService.updateCard( prc.auth.id, prc.auth.workspaceId, rc.cardId, rc );
         var redirectQuery = result.success
             ? "updated=1"
             : "error=" & urlEncodedFormat( result.code ?: "generic" );
-        if ( ( rc.returnTo ?: "" ) == "my-work" ) redirectQuery &= "&returnTo=my-work";
+        redirectQuery &= returnQuery;
         relocate( uri="/app/cards/#rc.cardId#?#redirectQuery#" );
     }
 
     function addCardComment( event, rc, prc ) {
+        var returnTo = normalizeCardReturnTo( rc.returnTo ?: "" );
+        var returnQuery = buildCardReturnQuery( returnTo, rc );
         if ( !csrfVerifyToken( rc.csrfToken ?: "", "card-write" ) ) {
-            relocate( uri="/app/cards/#rc.cardId#?error=expired" );
+            relocate( uri="/app/cards/#rc.cardId#?error=expired#returnQuery#" );
         }
         var result = boardService.addComment( prc.auth.id, prc.auth.workspaceId, rc.cardId, rc.body ?: "" );
         var redirectQuery = result.success
             ? "commented=1"
             : "error=" & urlEncodedFormat( result.code ?: "generic" );
-        if ( ( rc.returnTo ?: "" ) == "my-work" ) redirectQuery &= "&returnTo=my-work";
+        redirectQuery &= returnQuery;
         relocate( uri="/app/cards/#rc.cardId#?#redirectQuery#" );
     }
 
     function archiveCard( event, rc, prc ) {
+        var returnTo = normalizeCardReturnTo( rc.returnTo ?: "" );
+        var returnQuery = buildCardReturnQuery( returnTo, rc );
         if ( !csrfVerifyToken( rc.csrfToken ?: "", "card-write" ) ) {
-            relocate( uri="/app/cards/#rc.cardId#?error=expired" );
+            relocate( uri="/app/cards/#rc.cardId#?error=expired#returnQuery#" );
         }
         var result = boardService.archiveCard( prc.auth.id, prc.auth.workspaceId, rc.cardId );
-        if ( result.success && ( rc.returnTo ?: "" ) == "my-work" ) relocate( uri="/app/my-work" );
+        if ( result.success && returnTo == "my-work" ) relocate( uri="/app/my-work" );
+        if ( result.success && returnTo == "analytics" ) {
+            relocate( uri=buildAnalyticsReturnUrl( normalizeAnalyticsReturnFilters( rc ) ) );
+        }
         var boardQuery=result.boardId ?: "";
-        relocate( uri=result.success ? "/app?boardId=#urlEncodedFormat(boardQuery)#&cardArchived=1" : "/app/cards/#rc.cardId#?error=#urlEncodedFormat( result.code ?: "generic" )#" );
+        var failureUri = "/app/cards/" & rc.cardId
+            & "?error=" & urlEncodedFormat( result.code ?: "generic" )
+            & returnQuery;
+        relocate( uri=result.success ? "/app?boardId=#urlEncodedFormat(boardQuery)#&cardArchived=1" : failureUri );
     }
 
     function moveCard( event, rc, prc ) {
@@ -234,6 +250,67 @@ component {
             data=responseData,
             statusCode=result.success ? 200 : 403
         );
+    }
+
+    private string function normalizeCardReturnTo( required string value ) {
+        var normalized = lCase( trim( arguments.value ) );
+        return listFindNoCase( "my-work,analytics", normalized ) ? normalized : "board";
+    }
+
+    private struct function normalizeAnalyticsReturnFilters( required struct source ) {
+        var normalized = {
+            fromDate = "",
+            toDate = "",
+            boardId = "",
+            assigneeId = ""
+        };
+        var requestedFrom = trim( arguments.source.returnFromDate ?: "" );
+        var requestedTo = trim( arguments.source.returnToDate ?: "" );
+        var requestedBoard = lCase( trim( arguments.source.returnBoardId ?: "" ) );
+        var requestedAssignee = lCase( trim( arguments.source.returnAssigneeId ?: "" ) );
+
+        if ( isIsoDate( requestedFrom ) ) normalized.fromDate = requestedFrom;
+        if ( isIsoDate( requestedTo ) ) normalized.toDate = requestedTo;
+        if ( isCanonicalUuid( requestedBoard ) ) normalized.boardId = requestedBoard;
+        if ( isCanonicalUuid( requestedAssignee ) ) normalized.assigneeId = requestedAssignee;
+        return normalized;
+    }
+
+    private string function buildCardReturnQuery(
+        required string returnTo,
+        required struct source
+    ) {
+        if ( arguments.returnTo == "board" ) return "";
+        var query = "&returnTo=" & arguments.returnTo;
+        if ( arguments.returnTo != "analytics" ) return query;
+
+        var filters = normalizeAnalyticsReturnFilters( arguments.source );
+        if ( filters.fromDate.len() ) query &= "&returnFromDate=" & urlEncodedFormat( filters.fromDate );
+        if ( filters.toDate.len() ) query &= "&returnToDate=" & urlEncodedFormat( filters.toDate );
+        if ( filters.boardId.len() ) query &= "&returnBoardId=" & urlEncodedFormat( filters.boardId );
+        if ( filters.assigneeId.len() ) query &= "&returnAssigneeId=" & urlEncodedFormat( filters.assigneeId );
+        return query;
+    }
+
+    private string function buildAnalyticsReturnUrl( required struct filters ) {
+        var pairs = [];
+        if ( arguments.filters.fromDate.len() ) pairs.append( "fromDate=" & urlEncodedFormat( arguments.filters.fromDate ) );
+        if ( arguments.filters.toDate.len() ) pairs.append( "toDate=" & urlEncodedFormat( arguments.filters.toDate ) );
+        if ( arguments.filters.boardId.len() ) pairs.append( "boardId=" & urlEncodedFormat( arguments.filters.boardId ) );
+        if ( arguments.filters.assigneeId.len() ) pairs.append( "assigneeId=" & urlEncodedFormat( arguments.filters.assigneeId ) );
+        return "/app/analytics" & ( pairs.len() ? "?" & arrayToList( pairs, "&" ) : "" );
+    }
+
+    private boolean function isIsoDate( required string value ) {
+        return reFind( "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", arguments.value )
+            && isValid( "date", arguments.value );
+    }
+
+    private boolean function isCanonicalUuid( required string value ) {
+        return reFindNoCase(
+            "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            arguments.value
+        ) > 0;
     }
 
 }

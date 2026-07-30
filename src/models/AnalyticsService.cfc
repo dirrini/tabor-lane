@@ -1,5 +1,80 @@
 component singleton {
 
+	struct function getFilterOptions(
+		required string userId,
+		required string workspaceId
+	){
+		if ( !isCanonicalUuid( arguments.userId ) || !isCanonicalUuid( arguments.workspaceId ) ) {
+			return failure( "not_found" );
+		}
+
+		var accessRows = queryExecute(
+			"SELECT 1
+			 FROM workspace_member
+			 WHERE user_id=CAST(:userId AS UUID)
+			   AND workspace_id=CAST(:workspaceId AS UUID)",
+			{
+				userId=arguments.userId,
+				workspaceId=arguments.workspaceId
+			},
+			{ returntype="array" }
+		);
+		if ( !accessRows.len() ) return failure( "not_found" );
+
+		var boardRows = queryExecute(
+			"SELECT CAST(board.id AS TEXT) AS id,board.name
+			 FROM board
+			 JOIN workspace_member requester
+			   ON requester.workspace_id=board.workspace_id
+			  AND requester.user_id=CAST(:userId AS UUID)
+			 WHERE board.workspace_id=CAST(:workspaceId AS UUID)
+			   AND board.is_archived=false
+			 ORDER BY board.position,board.created_at,board.name,board.id",
+			{
+				userId=arguments.userId,
+				workspaceId=arguments.workspaceId
+			},
+			{ returntype="array" }
+		);
+		var boards = [];
+		for ( var boardRow in boardRows ) {
+			var board = {};
+			board[ "id" ] = boardRow.id;
+			board[ "name" ] = boardRow.name;
+			boards.append( board );
+		}
+
+		var memberRows = queryExecute(
+			"SELECT CAST(account.id AS TEXT) AS id,account.display_name
+			 FROM workspace_member membership
+			 JOIN workspace_member requester
+			   ON requester.workspace_id=membership.workspace_id
+			  AND requester.user_id=CAST(:userId AS UUID)
+			 JOIN app_user account ON account.id=membership.user_id
+			 WHERE membership.workspace_id=CAST(:workspaceId AS UUID)
+			 ORDER BY account.display_name,account.id",
+			{
+				userId=arguments.userId,
+				workspaceId=arguments.workspaceId
+			},
+			{ returntype="array" }
+		);
+		var members = [];
+		for ( var memberRow in memberRows ) {
+			var member = {};
+			member[ "id" ] = memberRow.id;
+			member[ "displayName" ] = memberRow.display_name;
+			members.append( member );
+		}
+
+		var options = {};
+		options[ "found" ] = true;
+		options[ "code" ] = "ok";
+		options[ "boards" ] = boards;
+		options[ "members" ] = members;
+		return options;
+	}
+
 	struct function getDashboard(
 		required string userId,
 		required string workspaceId,

@@ -792,7 +792,12 @@
       : root.querySelector?.("[data-workspace-page]");
     if (!workspaceMain || !workspaceShell) return;
     const page = workspaceMain.dataset.workspacePage;
-    const paths = { myWork: "/app/my-work", app: "/app", members: "/app/members" };
+    const paths = {
+      myWork: "/app/my-work",
+      app: "/app",
+      members: "/app/members",
+      analytics: "/app/analytics",
+    };
 
     workspaceShell.querySelectorAll(".workspace-sidebar nav a").forEach((link) => {
       const active = paths[page] && link.getAttribute("href") === paths[page];
@@ -829,5 +834,23 @@
       event.preventDefault();
       window.location.assign(responseUrl);
     }
+  });
+  document.body.addEventListener("htmx:beforeRequest", (event) => {
+    if (!event.detail?.elt?.closest?.("[data-analytics-filters]")) return;
+    document.querySelector("#analytics-results")?.setAttribute("aria-busy", "true");
+    const clientError = document.querySelector("[data-analytics-client-error]");
+    if (clientError) clientError.hidden = true;
+  });
+  document.body.addEventListener("htmx:afterRequest", (event) => {
+    if (!event.detail?.elt?.closest?.("[data-analytics-filters]")) return;
+    document.querySelector("#analytics-results")?.setAttribute("aria-busy", "false");
+  });
+  ["htmx:sendError", "htmx:responseError", "htmx:timeout"].forEach((eventName) => {
+    document.body.addEventListener(eventName, (event) => {
+      if (!event.detail?.elt?.closest?.("[data-analytics-filters]")) return;
+      document.querySelector("#analytics-results")?.setAttribute("aria-busy", "false");
+      const clientError = document.querySelector("[data-analytics-client-error]");
+      if (clientError) clientError.hidden = false;
+    });
   });
 })();

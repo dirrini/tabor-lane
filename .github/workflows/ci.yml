@@ -23,6 +23,9 @@ jobs:
           docker compose config --quiet
           jq empty src/includes/i18n/main_en_US.json
           jq empty src/includes/i18n/main_pt_BR.json
+          diff -u \
+            <(jq -r 'keys_unsorted[]' src/includes/i18n/main_en_US.json) \
+            <(jq -r 'keys_unsorted[]' src/includes/i18n/main_pt_BR.json)
 
       - name: Build application image
         run: docker compose build app

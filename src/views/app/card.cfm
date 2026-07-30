@@ -7,13 +7,34 @@
     errorMessage = listFindNoCase( knownErrors, prc.error )
         ? $r( "card.error.#prc.error#" )
         : $r( "card.error" );
+    workspacePage = "app";
+    backUrl = "/app?boardId=" & encodeForURL( card.board_id );
+    backKey = "card.back";
+    returnToValue = "";
+    if ( prc.returnTo == "my-work" ) {
+        workspacePage = "myWork";
+        backUrl = "/app/my-work";
+        backKey = "card.backMyWork";
+        returnToValue = "my-work";
+    } else if ( prc.returnTo == "analytics" ) {
+        workspacePage = "analytics";
+        backUrl = prc.analyticsReturnUrl;
+        backKey = "card.backAnalytics";
+        returnToValue = "analytics";
+    }
+    analyticsReturnFilters = prc.analyticsReturnFilters ?: {
+        fromDate = "",
+        toDate = "",
+        boardId = "",
+        assigneeId = ""
+    };
 </cfscript>
 <cfoutput>
 <cfif prc.isHtmxRequest><title>#encodeForHTML( prc.pageTitle )#</title></cfif>
-<section id="workspace-main" class="workspace-main card-details-main" data-workspace-page="#prc.returnTo == 'my-work' ? 'myWork' : 'app'#" data-card-csrf-token="#encodeForHTMLAttribute( prc.cardCsrfToken )#">
-    <a class="card-back-link" href="#prc.returnTo == 'my-work' ? '/app/my-work' : '/app?boardId=' & encodeForURL( card.board_id )#" hx-get="#prc.returnTo == 'my-work' ? '/app/my-work' : '/app?boardId=' & encodeForURL( card.board_id )#" hx-target="##workspace-main" hx-select="##workspace-main" hx-swap="outerHTML show:top" hx-push-url="true">
+<section id="workspace-main" class="workspace-main card-details-main" data-workspace-page="#workspacePage#" data-card-csrf-token="#encodeForHTMLAttribute( prc.cardCsrfToken )#">
+    <a class="card-back-link" href="#backUrl#" hx-get="#backUrl#" hx-target="##workspace-main" hx-select="##workspace-main" hx-swap="outerHTML show:top" hx-push-url="true">
         <svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##arrow-left"></use></svg>
-        #$r( prc.returnTo == "my-work" ? "card.backMyWork" : "card.back" )#
+        #$r( backKey )#
     </a>
 
     <header class="card-details-header">
@@ -34,7 +55,13 @@
                 <div class="panel-heading"><div><h2>#$r( "card.details" )#</h2></div></div>
                 <form class="card-form" method="post" action="/app/cards/#encodeForURL( card.id )#">
                     <input type="hidden" name="csrfToken" value="#encodeForHTMLAttribute( prc.cardCsrfToken )#">
-                    <input type="hidden" name="returnTo" value="#prc.returnTo == 'my-work' ? 'my-work' : ''#">
+                    <input type="hidden" name="returnTo" value="#returnToValue#">
+                    <cfif returnToValue == "analytics">
+                        <input type="hidden" name="returnFromDate" value="#encodeForHTMLAttribute( analyticsReturnFilters.fromDate )#">
+                        <input type="hidden" name="returnToDate" value="#encodeForHTMLAttribute( analyticsReturnFilters.toDate )#">
+                        <input type="hidden" name="returnBoardId" value="#encodeForHTMLAttribute( analyticsReturnFilters.boardId )#">
+                        <input type="hidden" name="returnAssigneeId" value="#encodeForHTMLAttribute( analyticsReturnFilters.assigneeId )#">
+                    </cfif>
                     <label>#$r( "app.card.title" )#<input name="title" maxlength="255" required value="#encodeForHTMLAttribute( card.title )#" #prc.canEditCard ? "" : "disabled"#></label>
                     <label class="card-form-wide">#$r( "card.description" )#<textarea name="description" rows="7" maxlength="20000" #prc.canEditCard ? "" : "disabled"#>#encodeForHTML( card.description ?: "" )#</textarea></label>
                     <label>#$r( "card.priority" )#<select name="priority" #prc.canEditCard ? "" : "disabled"#><cfloop list="none,low,medium,high,urgent" item="priority"><option value="#priority#" #card.priority == priority ? "selected" : ""#>#$r( "card.priority.#priority#" )#</option></cfloop></select></label>
@@ -72,7 +99,13 @@
                 <cfif prc.canEditCard>
                     <form class="card-comment-form" method="post" action="/app/cards/#encodeForURL( card.id )#/comments">
                         <input type="hidden" name="csrfToken" value="#encodeForHTMLAttribute( prc.cardCsrfToken )#">
-                        <input type="hidden" name="returnTo" value="#prc.returnTo == 'my-work' ? 'my-work' : ''#">
+                        <input type="hidden" name="returnTo" value="#returnToValue#">
+                        <cfif returnToValue == "analytics">
+                            <input type="hidden" name="returnFromDate" value="#encodeForHTMLAttribute( analyticsReturnFilters.fromDate )#">
+                            <input type="hidden" name="returnToDate" value="#encodeForHTMLAttribute( analyticsReturnFilters.toDate )#">
+                            <input type="hidden" name="returnBoardId" value="#encodeForHTMLAttribute( analyticsReturnFilters.boardId )#">
+                            <input type="hidden" name="returnAssigneeId" value="#encodeForHTMLAttribute( analyticsReturnFilters.assigneeId )#">
+                        </cfif>
                         <label>#$r( "card.comment" )#<textarea name="body" rows="3" maxlength="5000" required placeholder="#encodeForHTMLAttribute( $r( 'card.commentPlaceholder' ) )#"></textarea></label>
                         <button class="button button-primary button-small" type="submit">#$r( "card.commentSubmit" )#</button>
                     </form>
@@ -95,7 +128,19 @@
             </section>
             <section class="card-panel card-metadata">
                 <dl><div><dt>#$r( "card.createdAt" )#</dt><dd>#encodeForHTML( dateTimeFormat( card.created_at, dateMask ) )#</dd></div><div><dt>#$r( "card.updatedAt" )#</dt><dd>#encodeForHTML( dateTimeFormat( card.updated_at, dateMask ) )#</dd></div></dl>
-                <cfif prc.canEditCard><form method="post" action="/app/cards/#encodeForURL( card.id )#/archive" data-card-archive data-confirm="#encodeForHTMLAttribute( $r( 'card.archiveConfirm' ) )#"><input type="hidden" name="csrfToken" value="#encodeForHTMLAttribute( prc.cardCsrfToken )#"><input type="hidden" name="returnTo" value="#prc.returnTo == 'my-work' ? 'my-work' : ''#"><button class="button button-ghost" type="submit">#$r( "card.archive" )#</button></form></cfif>
+                <cfif prc.canEditCard>
+                    <form method="post" action="/app/cards/#encodeForURL( card.id )#/archive" data-card-archive data-confirm="#encodeForHTMLAttribute( $r( 'card.archiveConfirm' ) )#">
+                        <input type="hidden" name="csrfToken" value="#encodeForHTMLAttribute( prc.cardCsrfToken )#">
+                        <input type="hidden" name="returnTo" value="#returnToValue#">
+                        <cfif returnToValue == "analytics">
+                            <input type="hidden" name="returnFromDate" value="#encodeForHTMLAttribute( analyticsReturnFilters.fromDate )#">
+                            <input type="hidden" name="returnToDate" value="#encodeForHTMLAttribute( analyticsReturnFilters.toDate )#">
+                            <input type="hidden" name="returnBoardId" value="#encodeForHTMLAttribute( analyticsReturnFilters.boardId )#">
+                            <input type="hidden" name="returnAssigneeId" value="#encodeForHTMLAttribute( analyticsReturnFilters.assigneeId )#">
+                        </cfif>
+                        <button class="button button-ghost" type="submit">#$r( "card.archive" )#</button>
+                    </form>
+                </cfif>
             </section>
         </aside>
     </div>

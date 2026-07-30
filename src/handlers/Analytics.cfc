@@ -2,8 +2,10 @@ component {
 
 	property name="analyticsService" inject="AnalyticsService";
 	property name="authService" inject="AuthService";
+	property name="workspaceViewService" inject="WorkspaceViewService";
 
 	this.allowedMethods = {
+		index = "GET",
 		metrics = "GET"
 	};
 
@@ -24,6 +26,56 @@ component {
 		session.auth.role = workspaceContext.role;
 		prc.auth = session.auth;
 		prc.workspaceSwitchCsrfToken = csrfGenerateToken( "workspace-select" );
+	}
+
+	function index( event, rc, prc ) {
+		prc.page = "analytics";
+		prc.pageTitle = $r( "analytics.metaTitle" );
+		prc.analyticsError = "";
+		var isResultsPartial = isAnalyticsResultsRequest();
+
+		var requestedFilters = {};
+		requestedFilters[ "fromDate" ] = rc.fromDate ?: "";
+		requestedFilters[ "toDate" ] = rc.toDate ?: "";
+		requestedFilters[ "boardId" ] = rc.boardId ?: "";
+		requestedFilters[ "assigneeId" ] = rc.assigneeId ?: "";
+
+		prc.analytics = analyticsService.getDashboard(
+			prc.auth.id,
+			prc.auth.workspaceId,
+			requestedFilters
+		);
+		if ( !prc.analytics.found ) {
+			prc.analyticsError = expectedPageError( prc.analytics.code ?: "" );
+			prc.analytics = analyticsService.getDashboard(
+				prc.auth.id,
+				prc.auth.workspaceId,
+				{}
+			);
+			if ( !prc.analytics.found ) relocate( uri="/app" );
+		}
+
+		event.setHTTPHeader( name="Cache-Control", value="no-store" );
+		if ( isResultsPartial ) {
+			prc.isHtmxRequest = true;
+			event.setView( view="app/_analyticsResults", noLayout=true );
+			return;
+		}
+
+		prc.analyticsOptions = analyticsService.getFilterOptions(
+			prc.auth.id,
+			prc.auth.workspaceId
+		);
+		if ( !prc.analyticsOptions.found ) relocate( uri="/app" );
+
+		prc.analyticsFilters = {};
+		prc.analyticsFilters[ "fromDate" ] = prc.analytics.period.from;
+		prc.analyticsFilters[ "toDate" ] = prc.analytics.period.to;
+		prc.analyticsFilters[ "boardId" ] = prc.analytics.filters.boardId;
+		prc.analyticsFilters[ "assigneeId" ] = prc.analytics.filters.assigneeId;
+		prc.logoutCsrfToken = csrfGenerateToken( "logout" );
+
+		workspaceViewService.render( event, prc, "app/analytics" );
 	}
 
 	function metrics( event, rc, prc ) {
@@ -54,6 +106,21 @@ component {
 			data = result,
 			statusCode = statusCode
 		);
+	}
+
+	private string function expectedPageError( required string code ) {
+		var normalizedCode = lCase( trim( arguments.code ) );
+		return listFindNoCase(
+			"invalid_filter,invalid_period,not_found,forbidden",
+			normalizedCode
+		) ? normalizedCode : "generic";
+	}
+
+	private boolean function isAnalyticsResultsRequest() {
+		var headers = getHttpRequestData().headers ?: {};
+		return compareNoCase( headers[ "HX-Request" ] ?: "", "true" ) == 0
+			&& compareNoCase( headers[ "HX-Target" ] ?: "", "analytics-results" ) == 0
+			&& compareNoCase( headers[ "HX-History-Restore-Request" ] ?: "", "true" ) != 0;
 	}
 
 }

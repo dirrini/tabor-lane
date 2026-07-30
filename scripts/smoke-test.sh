@@ -23,9 +23,11 @@ avatar_before="$(mktemp)"
 avatar_after="$(mktemp)"
 boards_html="$(mktemp)"
 my_work_html="$(mktemp)"
+analytics_html="$(mktemp)"
+analytics_results_html="$(mktemp)"
 analytics_json="$(mktemp)"
 analytics_headers="$(mktemp)"
-trap 'rm -f "$cookie_jar" "$signup_html" "$app_html" "$check_email_html" "$members_html" "$billing_html" "$profile_html" "$card_html" "$partial_html" "$history_restore_html" "$invitation_html" "$member_cookie_jar" "$member_signup_html" "$attachment_payload" "$attachment_download" "$avatar_payload" "$avatar_before" "$avatar_after" "$boards_html" "$my_work_html" "$analytics_json" "$analytics_headers"' EXIT
+trap 'rm -f "$cookie_jar" "$signup_html" "$app_html" "$check_email_html" "$members_html" "$billing_html" "$profile_html" "$card_html" "$partial_html" "$history_restore_html" "$invitation_html" "$member_cookie_jar" "$member_signup_html" "$attachment_payload" "$attachment_download" "$avatar_payload" "$avatar_before" "$avatar_after" "$boards_html" "$my_work_html" "$analytics_html" "$analytics_results_html" "$analytics_json" "$analytics_headers"' EXIT
 
 assert_analytics_open_cards() {
   node -e '
@@ -87,7 +89,36 @@ if sed -n '/<header class="workspace-header">/,/<\/header>/p' "$app_html" | grep
   exit 1
 fi
 
-for partial_path in app app/my-work app/members app/profile app/billing app/boards/manage; do
+curl --fail --silent --show-error --cookie "$cookie_jar" \
+  "$base_url/app/analytics" > "$analytics_html"
+grep --quiet '<!doctype html>' "$analytics_html"
+grep --quiet 'class="workspace-sidebar"' "$analytics_html"
+grep --quiet 'data-workspace-page="analytics"' "$analytics_html"
+grep --quiet 'href="/app/analytics" class="active" aria-current="page"' "$analytics_html"
+grep --quiet 'data-analytics-filters' "$analytics_html"
+grep --quiet 'hx-target="#analytics-results"' "$analytics_html"
+grep --quiet 'name="fromDate" type="date"' "$analytics_html"
+grep --quiet 'name="toDate" type="date"' "$analytics_html"
+grep --quiet '<select name="boardId">' "$analytics_html"
+grep --quiet '<select name="assigneeId">' "$analytics_html"
+grep --quiet 'id="analytics-results"' "$analytics_html"
+grep --quiet 'class="analytics-panel-empty"' "$analytics_html"
+grep --quiet 'class="analytics-no-samples"' "$analytics_html"
+
+analytics_aging_path="$(
+  sed -n 's/.*href="\([^"]*returnTo=analytics[^"]*\)".*/\1/p' "$analytics_html" | head -1
+)"
+test -n "$analytics_aging_path"
+curl --fail --silent --show-error --cookie "$cookie_jar" \
+  "$base_url$analytics_aging_path" > "$card_html"
+grep --quiet 'data-workspace-page="analytics"' "$card_html"
+grep --quiet 'class="card-back-link" href="/app/analytics?fromDate=' "$card_html"
+grep --quiet "Back to Analytics" "$card_html"
+grep --quiet 'name="returnTo" value="analytics"' "$card_html"
+grep --quiet 'name="returnFromDate" value="' "$card_html"
+grep --quiet 'name="returnToDate" value="' "$card_html"
+
+for partial_path in app app/my-work app/members app/profile app/billing app/boards/manage app/analytics; do
   curl --fail --silent --show-error --cookie "$cookie_jar" \
     --header "HX-Request: true" "$base_url/$partial_path" > "$partial_html"
   grep --quiet 'id="workspace-main"' "$partial_html"
@@ -102,10 +133,72 @@ for partial_path in app app/my-work app/members app/profile app/billing app/boar
 done
 
 curl --fail --silent --show-error --cookie "$cookie_jar" \
+  --header "HX-Request: true" \
+  "$base_url/app/analytics" > "$analytics_html"
+grep --quiet 'id="workspace-main"' "$analytics_html"
+grep --quiet 'data-workspace-page="analytics"' "$analytics_html"
+grep --quiet 'data-analytics-filters' "$analytics_html"
+grep --quiet 'id="analytics-results"' "$analytics_html"
+if grep --quiet '<!doctype html>' "$analytics_html" \
+  || grep --quiet 'class="workspace-sidebar"' "$analytics_html"; then
+  echo "Analytics HTMX navigation unexpectedly included the workspace shell" >&2
+  exit 1
+fi
+
+analytics_partial_board_id="$(
+  sed -n 's/.*data-board-id="\([^"]*\)".*/\1/p' "$app_html" | head -1
+)"
+test -n "$analytics_partial_board_id"
+analytics_partial_from="$(date -u -d '-29 days' +%F)"
+analytics_partial_to="$(date -u +%F)"
+curl --fail --silent --show-error --cookie "$cookie_jar" \
+  --header "HX-Request: true" \
+  --header "HX-Target: analytics-results" \
+  --get \
+  --data-urlencode "fromDate=$analytics_partial_from" \
+  --data-urlencode "toDate=$analytics_partial_to" \
+  --data-urlencode "boardId=$analytics_partial_board_id" \
+  "$base_url/app/analytics" > "$analytics_results_html"
+grep --quiet 'id="analytics-results"' "$analytics_results_html"
+grep --quiet 'analytics-current-section' "$analytics_results_html"
+test "$(grep --count 'id="analytics-results"' "$analytics_results_html")" = "1"
+if grep --quiet 'id="workspace-main"' "$analytics_results_html" \
+  || grep --quiet 'data-analytics-filters' "$analytics_results_html" \
+  || grep --quiet '<!doctype html>' "$analytics_results_html" \
+  || grep --quiet 'class="workspace-sidebar"' "$analytics_results_html"; then
+  echo "Analytics results request unexpectedly included content outside its partial" >&2
+  exit 1
+fi
+
+curl --fail --silent --show-error --cookie "$cookie_jar" \
   --header "HX-Request: true" --header "HX-History-Restore-Request: true" \
   "$base_url/app" > "$history_restore_html"
 grep --quiet '<!doctype html>' "$history_restore_html"
 grep --quiet 'class="workspace-sidebar"' "$history_restore_html"
+
+curl --fail --silent --show-error --cookie "$cookie_jar" \
+  --header "HX-Request: true" \
+  --header "HX-Target: analytics-results" \
+  --header "HX-History-Restore-Request: true" \
+  "$base_url/app/analytics" > "$history_restore_html"
+grep --quiet '<!doctype html>' "$history_restore_html"
+grep --quiet 'class="workspace-sidebar"' "$history_restore_html"
+grep --quiet 'data-workspace-page="analytics"' "$history_restore_html"
+grep --quiet 'id="analytics-results"' "$history_restore_html"
+
+invalid_analytics_page_status="$(
+  curl --silent --show-error --get \
+    --output "$analytics_html" --write-out '%{http_code}' \
+    --cookie "$cookie_jar" \
+    --data-urlencode "fromDate=2026-01-02" \
+    --data-urlencode "toDate=2026-01-01" \
+    "$base_url/app/analytics"
+)"
+test "$invalid_analytics_page_status" = "200"
+grep --quiet 'data-workspace-page="analytics"' "$analytics_html"
+grep --quiet 'id="analytics-results"' "$analytics_html"
+grep --quiet 'class="analytics-error-state"' "$analytics_html"
+grep --quiet "Choose a valid period of up to 366 days." "$analytics_html"
 
 curl --fail --silent --show-error --cookie "$cookie_jar" "$base_url/app/billing" > "$billing_html"
 grep --quiet "Plan and billing" "$billing_html"
@@ -1326,6 +1419,14 @@ if grep --quiet -E "CI Hidden Archive|CI hidden archive card|hidden-archive.txt|
   echo "Analytics exposed a hidden lane or one of its resources to a member" >&2
   exit 1
 fi
+curl --fail --silent --show-error --get --cookie "$member_cookie_jar" \
+  --data-urlencode "boardId=$managed_board_id" \
+  "$base_url/app/analytics" > "$analytics_html"
+grep --quiet 'data-workspace-page="analytics"' "$analytics_html"
+if grep --quiet -E "CI Hidden Archive|CI hidden archive card|hidden-archive.txt|$hidden_lane_id|$hidden_card_id" "$analytics_html"; then
+  echo "Analytics HTML exposed a hidden lane or one of its resources to a member" >&2
+  exit 1
+fi
 
 curl --fail --silent --show-error --cookie "$cookie_jar" \
   "$base_url/app/boards/manage?boardId=$managed_board_id" > "$boards_html"
@@ -1573,6 +1674,11 @@ curl --fail --silent --show-error --cookie "$cookie_jar" \
   "$base_url/app/cards/$card_id" > "$card_html"
 grep --quiet "Detalhes do card" "$card_html"
 grep --quiet "Prioridade" "$card_html"
+curl --fail --silent --show-error --cookie "$cookie_jar" \
+  "$base_url/app/analytics" > "$analytics_html"
+grep --quiet "Visão atual do fluxo" "$analytics_html"
+grep --quiet "Desempenho no período" "$analytics_html"
+grep --quiet "Qualidade e interpretação dos dados" "$analytics_html"
 
 if command -v docker > /dev/null 2>&1 \
   && smoke_db_user="$(docker compose exec -T postgres printenv POSTGRES_USER 2> /dev/null | tr -d '\r')" \

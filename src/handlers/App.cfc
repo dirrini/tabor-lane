@@ -108,7 +108,8 @@ component {
     }
 
     function cardDetails( event, rc, prc ) {
-        prc.page = "app";
+        prc.returnTo = ( rc.returnTo ?: "" ) == "my-work" ? "my-work" : "board";
+        prc.page = prc.returnTo == "my-work" ? "myWork" : "app";
         prc.cardDetails = boardService.getCardDetails( prc.auth.id, prc.auth.workspaceId, rc.cardId ?: "" );
         if ( !prc.cardDetails.found ) relocate( uri="/app" );
         prc.pageTitle = prc.cardDetails.card.title;
@@ -143,6 +144,7 @@ component {
         var redirectQuery = result.success
             ? "updated=1"
             : "error=" & urlEncodedFormat( result.code ?: "generic" );
+        if ( ( rc.returnTo ?: "" ) == "my-work" ) redirectQuery &= "&returnTo=my-work";
         relocate( uri="/app/cards/#rc.cardId#?#redirectQuery#" );
     }
 
@@ -154,6 +156,7 @@ component {
         var redirectQuery = result.success
             ? "commented=1"
             : "error=" & urlEncodedFormat( result.code ?: "generic" );
+        if ( ( rc.returnTo ?: "" ) == "my-work" ) redirectQuery &= "&returnTo=my-work";
         relocate( uri="/app/cards/#rc.cardId#?#redirectQuery#" );
     }
 
@@ -162,6 +165,7 @@ component {
             relocate( uri="/app/cards/#rc.cardId#?error=expired" );
         }
         var result = boardService.archiveCard( prc.auth.id, prc.auth.workspaceId, rc.cardId );
+        if ( result.success && ( rc.returnTo ?: "" ) == "my-work" ) relocate( uri="/app/my-work" );
         var boardQuery=result.boardId ?: "";
         relocate( uri=result.success ? "/app?boardId=#urlEncodedFormat(boardQuery)#&cardArchived=1" : "/app/cards/#rc.cardId#?error=#urlEncodedFormat( result.code ?: "generic" )#" );
     }

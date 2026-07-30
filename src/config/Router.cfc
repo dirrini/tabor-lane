@@ -12,6 +12,8 @@ component {
         post( "/app/profile/password" ).to( "Profile.changePassword" );
         post( "/app/profile/details" ).to( "Profile.update" );
         route( "/app/profile" ).to( "Profile.index" );
+        post( "/app/my-work/cards/:cardId" ).to( "MyWork.updateCard" );
+        get( "/app/my-work" ).to( "MyWork.index" );
         post( "/app/members/invite" ).to( "App.inviteMember" );
         route( "/app/members" ).to( "App.members" );
         get( "/app/boards/manage" ).to( "Boards.index" );

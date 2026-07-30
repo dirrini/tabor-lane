@@ -449,7 +449,7 @@
       : root.querySelector?.("[data-workspace-page]");
     if (!workspaceMain || !workspaceShell) return;
     const page = workspaceMain.dataset.workspacePage;
-    const paths = { app: "/app", members: "/app/members" };
+    const paths = { myWork: "/app/my-work", app: "/app", members: "/app/members" };
 
     workspaceShell.querySelectorAll(".workspace-sidebar nav a").forEach((link) => {
       const active = paths[page] && link.getAttribute("href") === paths[page];

@@ -19,7 +19,8 @@ member_signup_html="$(mktemp)"
 attachment_payload="$(mktemp)"
 attachment_download="$(mktemp)"
 boards_html="$(mktemp)"
-trap 'rm -f "$cookie_jar" "$signup_html" "$app_html" "$check_email_html" "$members_html" "$billing_html" "$profile_html" "$card_html" "$partial_html" "$history_restore_html" "$invitation_html" "$member_cookie_jar" "$member_signup_html" "$attachment_payload" "$attachment_download" "$boards_html"' EXIT
+my_work_html="$(mktemp)"
+trap 'rm -f "$cookie_jar" "$signup_html" "$app_html" "$check_email_html" "$members_html" "$billing_html" "$profile_html" "$card_html" "$partial_html" "$history_restore_html" "$invitation_html" "$member_cookie_jar" "$member_signup_html" "$attachment_payload" "$attachment_download" "$boards_html" "$my_work_html"' EXIT
 
 curl --fail --silent --show-error --cookie-jar "$cookie_jar" "$base_url/signup" > "$signup_html"
 csrf_token="$(sed -n 's/.*name="csrfToken" value="\([^"]*\)".*/\1/p' "$signup_html" | head -1)"
@@ -60,7 +61,7 @@ grep --quiet "data-workspace-menu-toggle" "$app_html"
 grep --quiet '<!doctype html>' "$app_html"
 grep --quiet 'class="workspace-sidebar"' "$app_html"
 
-for partial_path in app app/members app/profile app/billing app/boards/manage; do
+for partial_path in app app/my-work app/members app/profile app/billing app/boards/manage; do
   curl --fail --silent --show-error --cookie "$cookie_jar" \
     --header "HX-Request: true" "$base_url/$partial_path" > "$partial_html"
   grep --quiet 'id="workspace-main"' "$partial_html"
@@ -126,10 +127,12 @@ test "$password_update_status" = "302"
 csrf_token="$(sed -n 's/.*data-csrf-token="\([^"]*\)".*/\1/p' "$app_html" | head -1)"
 column_id="$(grep -o 'data-column-id="[^"]*"' "$app_html" | head -1 | cut -d'"' -f2)"
 target_column_id="$(grep -o 'data-column-id="[^"]*"' "$app_html" | sed -n '2p' | cut -d'"' -f2)"
+last_column_id="$(grep -o 'data-column-id="[^"]*"' "$app_html" | tail -1 | cut -d'"' -f2)"
 card_id="$(grep -o 'data-card-id="[^"]*"' "$app_html" | head -1 | cut -d'"' -f2)"
 test -n "$csrf_token"
 test -n "$column_id"
 test -n "$target_column_id"
+test -n "$last_column_id"
 test -n "$card_id"
 
 move_response="$(
@@ -164,7 +167,14 @@ curl --fail --silent --show-error --cookie "$cookie_jar" \
   "$base_url/app/cards/$managed_card_id" > "$card_html"
 grep --quiet "Card details" "$card_html"
 card_csrf_token="$(sed -n 's/.*data-card-csrf-token="\([^"]*\)".*/\1/p' "$card_html" | head -1)"
+owner_user_id="$(
+  grep -o 'value="[^"]*"[^>]*>CI Owner Updated</option>' "$card_html" \
+    | head -1 | sed -n 's/value="\([^"]*\)".*/\1/p'
+)"
 test -n "$card_csrf_token"
+test -n "$owner_user_id"
+upcoming_date="$(date -u -d '+5 days' +%F)"
+today_date="$(date -u +%F)"
 
 card_update_result="$(
   curl --silent --show-error --output /dev/null --write-out '%{http_code}|%{redirect_url}' \
@@ -174,8 +184,8 @@ card_update_result="$(
     --data-urlencode "title=CI managed card" \
     --data-urlencode "description=Updated through card management" \
     --data-urlencode "priority=high" \
-    --data-urlencode "assigneeId=" \
-    --data-urlencode "dueDate=2026-12-31" \
+    --data-urlencode "assigneeId=$owner_user_id" \
+    --data-urlencode "dueDate=$upcoming_date" \
     --data-urlencode "labels=ci, regression"
 )"
 if [[ "$card_update_result" != 302*"updated=1" ]]; then
@@ -193,6 +203,93 @@ fi
 grep --quiet "Updated through card management" "$card_html"
 grep --quiet 'value="ci,regression"' "$card_html"
 grep --quiet "updated the card" "$card_html"
+
+curl --fail --silent --show-error --cookie "$cookie_jar" \
+  "$base_url/app/my-work" > "$my_work_html"
+grep --quiet '<!doctype html>' "$my_work_html"
+grep --quiet 'class="workspace-sidebar"' "$my_work_html"
+grep --quiet 'data-workspace-page="myWork"' "$my_work_html"
+grep --quiet 'href="/app/my-work" class="active"' "$my_work_html"
+grep --quiet "CI managed card" "$my_work_html"
+grep 'data-my-work-card="'"$managed_card_id"'"' "$my_work_html" \
+  | grep --quiet 'data-my-work-group="upcoming".*data-priority="high"'
+my_work_csrf="$(
+  grep -A 30 'data-my-work-card="'"$managed_card_id"'"' "$my_work_html" \
+    | sed -n 's/.*name="csrfToken" value="\([^"]*\)".*/\1/p' | head -1
+)"
+my_work_version="$(
+  grep -A 30 'data-my-work-card="'"$managed_card_id"'"' "$my_work_html" \
+    | sed -n 's/.*name="version" value="\([^"]*\)".*/\1/p' | head -1
+)"
+test -n "$my_work_csrf"
+test -n "$my_work_version"
+
+curl --fail --silent --show-error --get --cookie "$cookie_jar" \
+  --data-urlencode "priority=high" "$base_url/app/my-work" > "$my_work_html"
+grep --quiet "CI managed card" "$my_work_html"
+curl --fail --silent --show-error --get --cookie "$cookie_jar" \
+  --data-urlencode "query=CI no matching work" "$base_url/app/my-work" > "$my_work_html"
+grep --quiet "No cards match these filters" "$my_work_html"
+if grep --quiet "CI managed card" "$my_work_html"; then
+  echo "My Work search returned a card that does not match" >&2
+  exit 1
+fi
+
+quick_update_status="$(
+  curl --silent --show-error --output "$my_work_html" --write-out '%{http_code}' \
+    --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+    --header "HX-Request: true" \
+    --request POST "$base_url/app/my-work/cards/$managed_card_id" \
+    --data-urlencode "csrfToken=$my_work_csrf" \
+    --data-urlencode "version=$my_work_version" \
+    --data-urlencode "priority=urgent" \
+    --data-urlencode "dueDate=$today_date" \
+    --data-urlencode "due=all" \
+    --data-urlencode "sort=due"
+)"
+test "$quick_update_status" = "200"
+grep --quiet 'id="my-work-results"' "$my_work_html"
+grep --quiet "Card updated and reorganized" "$my_work_html"
+grep 'data-my-work-card="'"$managed_card_id"'"' "$my_work_html" \
+  | grep --quiet 'data-my-work-group="today".*data-priority="urgent"'
+if grep --quiet '<!doctype html>' "$my_work_html" || grep --quiet 'class="workspace-sidebar"' "$my_work_html"; then
+  echo "My Work quick update unexpectedly returned the full document" >&2
+  exit 1
+fi
+
+invalid_my_work_status="$(
+  curl --silent --show-error --output "$partial_html" --write-out '%{http_code}' \
+    --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+    --header "HX-Request: true" \
+    --request POST "$base_url/app/my-work/cards/$managed_card_id" \
+    --data-urlencode "csrfToken=invalid" \
+    --data-urlencode "version=$my_work_version" \
+    --data-urlencode "priority=low" \
+    --data-urlencode "dueDate="
+)"
+test "$invalid_my_work_status" = "403"
+
+curl --fail --silent --show-error --get --cookie "$cookie_jar" \
+  --data-urlencode "due=today" "$base_url/app/my-work" > "$my_work_html"
+grep 'data-my-work-card="'"$managed_card_id"'"' "$my_work_html" \
+  | grep --quiet 'data-my-work-group="today".*data-priority="urgent"'
+curl --fail --silent --show-error --cookie "$cookie_jar" \
+  "$base_url/app/cards/$managed_card_id?returnTo=my-work" > "$card_html"
+grep --quiet "Back to My work" "$card_html"
+grep --quiet 'data-workspace-page="myWork"' "$card_html"
+
+complete_card_response="$(
+  curl --fail --silent --show-error \
+    --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+    --request POST "$base_url/app/cards/$managed_card_id/move" \
+    --data-urlencode "csrfToken=$card_csrf_token" \
+    --data-urlencode "columnId=$last_column_id"
+)"
+printf '%s' "$complete_card_response" | grep --quiet '"success":true'
+curl --fail --silent --show-error --cookie "$cookie_jar" "$base_url/app/my-work" > "$my_work_html"
+grep 'data-my-work-card="'"$managed_card_id"'"' "$my_work_html" \
+  | grep --quiet 'data-my-work-group="completed".*data-priority="urgent"'
+grep --quiet "Completed recently" "$my_work_html"
 
 card_comment_status="$(
   curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
@@ -600,6 +697,12 @@ curl --fail --silent --show-error --cookie "$member_cookie_jar" --cookie-jar "$m
 curl --fail --silent --show-error --cookie "$member_cookie_jar" "$base_url/app" > "$app_html"
 grep --quiet "CI Workspace" "$app_html"
 grep --quiet "member" "$app_html"
+curl --fail --silent --show-error --cookie "$member_cookie_jar" "$base_url/app/my-work" > "$my_work_html"
+if grep --quiet "CI managed card" "$my_work_html"; then
+  echo "My Work exposed a card assigned to another user" >&2
+  exit 1
+fi
+grep --quiet "Nothing assigned to you yet" "$my_work_html"
 
 curl --fail --silent --show-error --location \
   --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
@@ -608,5 +711,29 @@ curl --fail --silent --show-error --cookie "$cookie_jar" \
   "$base_url/app/cards/$card_id" > "$card_html"
 grep --quiet "Detalhes do card" "$card_html"
 grep --quiet "Prioridade" "$card_html"
+
+if command -v docker > /dev/null 2>&1 \
+  && smoke_db_user="$(docker compose exec -T postgres printenv POSTGRES_USER 2> /dev/null | tr -d '\r')" \
+  && smoke_db_name="$(docker compose exec -T postgres printenv POSTGRES_DB 2> /dev/null | tr -d '\r')"; then
+  printf '%s\n' \
+    "UPDATE card" \
+    "   SET assignee_id=(SELECT id FROM app_user WHERE email=:'member_email')" \
+    " WHERE id=CAST(:'managed_card_id' AS UUID);" \
+    "DELETE FROM workspace_member" \
+    " WHERE user_id=(SELECT id FROM app_user WHERE email=:'member_email');" \
+    | docker compose exec -T postgres psql \
+    --username "$smoke_db_user" \
+    --dbname "$smoke_db_name" \
+    --set ON_ERROR_STOP=1 \
+    --set member_email="$invite_email" \
+    --set managed_card_id="$managed_card_id" \
+    --file=- > /dev/null
+  curl --fail --silent --show-error --cookie "$member_cookie_jar" \
+    "$base_url/app/my-work" > "$my_work_html"
+  if grep --quiet "CI managed card" "$my_work_html"; then
+    echo "My Work exposed workspace data after membership removal" >&2
+    exit 1
+  fi
+fi
 
 echo "Functional smoke test passed"

@@ -14,6 +14,16 @@ component {
         route( "/app/profile" ).to( "Profile.index" );
         post( "/app/members/invite" ).to( "App.inviteMember" );
         route( "/app/members" ).to( "App.members" );
+        get( "/app/boards/manage" ).to( "Boards.index" );
+        post( "/app/boards/:boardId/lanes/:laneId/move" ).to( "Boards.moveLane" );
+        post( "/app/boards/:boardId/lanes/:laneId/delete" ).to( "Boards.deleteLane" );
+        post( "/app/boards/:boardId/lanes/:laneId/update" ).to( "Boards.updateLane" );
+        post( "/app/boards/:boardId/lanes" ).to( "Boards.createLane" );
+        post( "/app/boards/:boardId/restore" ).to( "Boards.restore" );
+        post( "/app/boards/:boardId/archive" ).to( "Boards.archive" );
+        post( "/app/boards/:boardId/move" ).to( "Boards.moveBoard" );
+        post( "/app/boards/:boardId/update" ).to( "Boards.update" );
+        post( "/app/boards" ).to( "Boards.create" );
         get( "/app/attachments/:attachmentId/download" ).to( "Attachments.download" );
         post( "/app/cards/:cardId/attachments/:attachmentId/remove" ).to( "Attachments.remove" );
         post( "/app/cards/:cardId/attachments/:attachmentId/complete" ).to( "Attachments.complete" );

@@ -79,7 +79,11 @@ component {
     function index( event, rc, prc ) {
         prc.page = "app";
         prc.pageTitle = $r( "app.metaTitle" );
-        prc.workspaceBoard = boardService.getWorkspaceBoard( prc.auth.id, prc.auth.workspaceId );
+        prc.workspaceBoard = boardService.getWorkspaceBoard(
+            prc.auth.id,
+            prc.auth.workspaceId,
+            rc.boardId ?: ""
+        );
         prc.cardCsrfToken = csrfGenerateToken( "card-write" );
         prc.logoutCsrfToken = csrfGenerateToken( "logout" );
         workspaceViewService.render( event, prc, "app/index" );
@@ -90,13 +94,14 @@ component {
             relocate( uri = "/app" );
         }
         if ( trim( rc.title ?: "" ).len() && trim( rc.columnId ?: "" ).len() ) {
-            boardService.createCard(
+            var result=boardService.createCard(
                 userId = prc.auth.id,
                 workspaceId = prc.auth.workspaceId,
                 columnId = rc.columnId,
                 title = rc.title,
                 description = rc.description ?: ""
             );
+            if(result.success) relocate(uri="/app?boardId=#urlEncodedFormat(result.boardId)#");
         }
         relocate( uri = "/app" );
     }
@@ -156,7 +161,8 @@ component {
             relocate( uri="/app/cards/#rc.cardId#?error=expired" );
         }
         var result = boardService.archiveCard( prc.auth.id, prc.auth.workspaceId, rc.cardId );
-        relocate( uri=result.success ? "/app?cardArchived=1" : "/app/cards/#rc.cardId#?error=#urlEncodedFormat( result.code ?: "generic" )#" );
+        var boardQuery=result.boardId ?: "";
+        relocate( uri=result.success ? "/app?boardId=#urlEncodedFormat(boardQuery)#&cardArchived=1" : "/app/cards/#rc.cardId#?error=#urlEncodedFormat( result.code ?: "generic" )#" );
     }
 
     function moveCard( event, rc, prc ) {
@@ -181,7 +187,7 @@ component {
         event.renderData(
             type = "json",
             data = responseData,
-            statusCode = result.success ? 200 : 403
+            statusCode = result.success ? 200 : ( result.code ?: "" ) == "wip_limit" ? 409 : 403
         );
     }
 

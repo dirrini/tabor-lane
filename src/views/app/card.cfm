@@ -11,7 +11,7 @@
 <cfoutput>
 <cfif prc.isHtmxRequest><title>#encodeForHTML( prc.pageTitle )#</title></cfif>
 <section id="workspace-main" class="workspace-main card-details-main" data-workspace-page="app" data-card-csrf-token="#encodeForHTMLAttribute( prc.cardCsrfToken )#">
-    <a class="card-back-link" href="/app" hx-get="/app" hx-target="##workspace-main" hx-select="##workspace-main" hx-swap="outerHTML show:top" hx-push-url="true">
+    <a class="card-back-link" href="/app?boardId=#encodeForURL( card.board_id )#" hx-get="/app?boardId=#encodeForURL( card.board_id )#" hx-target="##workspace-main" hx-select="##workspace-main" hx-swap="outerHTML show:top" hx-push-url="true">
         <svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##arrow-left"></use></svg>
         #$r( "card.back" )#
     </a>

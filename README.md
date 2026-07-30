@@ -9,8 +9,8 @@ The application includes registration, email verification, password recovery,
 login and workspace invitations. Every independent account creates a Free
 workspace, links the user as its owner and provisions an initial board. Invited
 accounts join the existing workspace with their assigned role. Authenticated
-users can create cards and move them between columns with changes persisted in
-PostgreSQL.
+users can manage multiple boards and lanes, create complete cards and move them
+through workflows with changes persisted in PostgreSQL.
 
 ## Technology
 
@@ -133,11 +133,23 @@ and can use the same value as `STORAGE_ENDPOINT` in production.
 Free workspaces can store files up to 10 MB each and 100 MB in total. Premium
 workspaces can store files up to 50 MB each and 5 GB in total.
 
+## Boards and lanes
+
+Workspace owners and admins can create boards from simple Kanban, software,
+marketing and personal templates. Boards support editing, ordering, archiving
+and restoration. Lanes support names, colors, ordering and enforceable WIP
+limits. A lane with active cards cannot be removed, and removal is implemented
+as a soft delete to preserve transition history.
+
+Free workspaces can keep up to 3 active boards. Premium workspaces have no
+active-board limit.
+
 ## Delivery
 
 `ci.yml` validates translations, builds the application, starts the complete
 stack and checks application, PostgreSQL and MinIO health. Its functional smoke
-test also creates an account, verifies workspace ownership and persists a card.
+test also covers account lifecycle, cards, attachments, members, boards, lanes,
+plan limits, archiving and WIP enforcement.
 
 `deploy-oci.yml` builds an immutable `amd64`/`arm64` image, publishes it to
 GHCR and deploys it to an OCI VM. The VM must already contain Docker, a GHCR

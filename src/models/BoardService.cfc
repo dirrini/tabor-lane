@@ -1,6 +1,6 @@
 component singleton {
 
-	struct function getWorkspaceBoard( required string userId, required string workspaceId ){
+	struct function getWorkspaceBoard( required string userId, required string workspaceId, string boardId = "" ){
 		var boards = queryExecute(
 			"SELECT CAST(b.id AS TEXT) AS id, b.name, b.description, w.name AS workspace_name, w.plan, wm.role
 			 FROM board b
@@ -9,8 +9,7 @@ component singleton {
 			 WHERE wm.user_id = CAST(:userId AS UUID)
 			   AND w.id = CAST(:workspaceId AS UUID)
 			   AND b.is_archived = false
-			 ORDER BY b.created_at
-			 LIMIT 1",
+			 ORDER BY b.position,b.created_at,b.name",
 			{ userId = arguments.userId, workspaceId = arguments.workspaceId },
 			{ returntype = "array" }
 		);
@@ -18,12 +17,18 @@ component singleton {
 			return { found = false };
 		}
 
+		var requestedBoardId=urlDecode(arguments.boardId);
+		var selectedBoard=boards[1];
+		for(var candidate in boards){
+			if(candidate.id==requestedBoardId){selectedBoard=candidate;break;}
+		}
+
 		var columns = queryExecute(
-			"SELECT CAST(id AS TEXT) AS id, name, position, wip_limit
+			"SELECT CAST(id AS TEXT) AS id, name, position, wip_limit, color
 			 FROM board_column
-			 WHERE board_id = CAST(:boardId AS UUID)
+			 WHERE board_id = CAST(:boardId AS UUID) AND is_archived=false
 			 ORDER BY position",
-			{ boardId = boards[ 1 ].id },
+			{ boardId = selectedBoard.id },
 			{ returntype = "array" }
 		);
 		var cards = queryExecute(
@@ -42,7 +47,7 @@ component singleton {
 			 ) att ON true
 			 WHERE c.board_id = CAST(:boardId AS UUID) AND c.archived_at IS NULL
 			 ORDER BY c.column_id, c.position, c.created_at",
-			{ boardId = boards[ 1 ].id },
+			{ boardId = selectedBoard.id },
 			{ returntype = "array" }
 		);
 
@@ -55,7 +60,7 @@ component singleton {
 			}
 		}
 
-		return { found = true, board = boards[ 1 ], columns = columns };
+		return { found = true, board = selectedBoard, boards = boards, columns = columns };
 	}
 
 	struct function createCard(
@@ -71,6 +76,7 @@ component singleton {
 			 JOIN board b ON b.id = bc.board_id
 			 JOIN workspace_member wm ON wm.workspace_id = b.workspace_id
 			 WHERE bc.id = CAST(:columnId AS UUID)
+			   AND bc.is_archived=false
 			   AND b.workspace_id = CAST(:workspaceId AS UUID)
 			   AND wm.user_id = CAST(:userId AS UUID)",
 			{ columnId = arguments.columnId, workspaceId = arguments.workspaceId, userId = arguments.userId },
@@ -101,7 +107,7 @@ component singleton {
 			}
 		);
 		recordActivity( cardId, arguments.userId, "created" );
-		return { success = true, cardId = cardId };
+		return { success = true, cardId = cardId, boardId = access[ 1 ].board_id };
 	}
 
 	struct function moveCard(
@@ -111,10 +117,11 @@ component singleton {
 		required string columnId
 	){
 		var rows = queryExecute(
-			"SELECT CAST(c.column_id AS TEXT) AS from_column_id, CAST(c.board_id AS TEXT) AS board_id, wm.role
+			"SELECT CAST(c.column_id AS TEXT) AS from_column_id, CAST(c.board_id AS TEXT) AS board_id,
+			        wm.role,target.wip_limit
 			 FROM card c
 			 JOIN workspace_member wm ON wm.workspace_id = c.workspace_id
-			 JOIN board_column target ON target.id = CAST(:columnId AS UUID) AND target.board_id = c.board_id
+			 JOIN board_column target ON target.id = CAST(:columnId AS UUID) AND target.board_id = c.board_id AND target.is_archived=false
 			 WHERE c.id = CAST(:cardId AS UUID)
 			   AND c.workspace_id = CAST(:workspaceId AS UUID)
 			   AND wm.user_id = CAST(:userId AS UUID)
@@ -132,6 +139,14 @@ component singleton {
 		}
 		if ( rows[ 1 ].role == "viewer" ) {
 			return { success = false, code = "read_only" };
+		}
+		var targetWip=rows[1].wip_limit ?: "";
+		if(toString(targetWip).len() && rows[1].from_column_id!=arguments.columnId){
+			var targetCount=queryExecute(
+				"SELECT COUNT(*) total FROM card WHERE column_id=CAST(:column AS UUID) AND archived_at IS NULL",
+				{column=arguments.columnId},{returntype="array"}
+			)[1].total;
+			if(targetCount>=val(targetWip)) return {success=false,code="wip_limit"};
 		}
 
 		transaction {
@@ -175,7 +190,7 @@ component singleton {
 			"SELECT CAST(c.id AS TEXT) id, c.title, c.description, c.priority, array_to_string(c.labels, ',') AS labels_csv,
 			        to_char(c.due_at AT TIME ZONE 'UTC','YYYY-MM-DD') due_date,
 			        CAST(c.assignee_id AS TEXT) assignee_id, c.created_at, c.updated_at,
-			        b.name board_name, bc.name column_name, access.role AS access_role
+			        CAST(b.id AS TEXT) board_id,b.name board_name, bc.name column_name, access.role AS access_role
 			 FROM card c JOIN board b ON b.id=c.board_id JOIN board_column bc ON bc.id=c.column_id
 			 JOIN workspace_member access ON access.workspace_id=c.workspace_id
 			 WHERE c.id=CAST(:cardId AS UUID) AND c.workspace_id=CAST(:workspaceId AS UUID)
@@ -232,7 +247,7 @@ component singleton {
 			 dueDate=trim(arguments.data.dueDate ?: ""),labels=arrayToList(cleanLabels),cardId=arguments.cardId,workspaceId=arguments.workspaceId}
 		);
 		recordActivity(arguments.cardId,arguments.userId,"updated");
-		return {success=true};
+		return {success=true,boardId=access.card.board_id};
 	}
 
 	struct function addComment( required string userId, required string workspaceId, required string cardId, required string body ){
@@ -252,7 +267,7 @@ component singleton {
 		if(access.card.access_role=="viewer") return {success=false,code="read_only"};
 		recordActivity(arguments.cardId,arguments.userId,"archived");
 		queryExecute("UPDATE card SET archived_at=now(),updated_at=now() WHERE id=CAST(:card AS UUID)",{card=arguments.cardId});
-		return {success=true};
+		return {success=true,boardId=access.card.board_id};
 	}
 
 	private void function recordActivity(required string cardId,required string userId,required string action){

@@ -84,14 +84,16 @@
                     <div class="panel-heading"><div><h2>#$r("lanes.title")#</h2><p>#$r("lanes.subtitle")#</p></div><span>#management.lanes.len()#</span></div>
                     <div class="lane-management-list">
                         <cfloop array="#management.lanes#" item="lane" index="laneIndex">
-                            <article class="lane-management-row lane-color-#encodeForHTMLAttribute(lane.color)#" data-lane-id="#encodeForHTMLAttribute(lane.id)#" data-lane-name="#encodeForHTMLAttribute(lane.name)#">
+                            <cfset laneHiddenFromMembers=lane.is_hidden_from_members ?: false>
+                            <article class="lane-management-row lane-color-#encodeForHTMLAttribute(lane.color)##laneHiddenFromMembers ? ' is-hidden-from-members' : ''#" data-lane-id="#encodeForHTMLAttribute(lane.id)#" data-lane-name="#encodeForHTMLAttribute(lane.name)#" data-hidden-from-members="#laneHiddenFromMembers ? 'true' : 'false'#">
                                 <span class="lane-color-mark"></span>
                                 <cfif management.canManage && !selected.is_archived>
                                     <form class="lane-edit-form" method="post" action="/app/boards/#encodeForURL(selected.id)#/lanes/#encodeForURL(lane.id)#/update" hx-post="/app/boards/#encodeForURL(selected.id)#/lanes/#encodeForURL(lane.id)#/update" hx-target="##workspace-main" hx-select="##workspace-main" hx-swap="outerHTML">
                                         <input type="hidden" name="csrfToken" value="#encodeForHTMLAttribute(prc.boardCsrfToken)#">
-                                        <label><span>#$r("lanes.name")#</span><input name="name" value="#encodeForHTMLAttribute(lane.name)#" required maxlength="120"></label>
+                                        <label><span class="lane-field-heading"><span>#$r("lanes.name")#</span><cfif laneHiddenFromMembers><span class="lane-hidden-badge" title="#encodeForHTMLAttribute($r('lanes.hiddenHint'))#"><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##lock"></use></svg> #$r("lanes.hiddenBadge")#</span></cfif></span><input name="name" value="#encodeForHTMLAttribute(lane.name)#" required maxlength="120"></label>
                                         <label><span>#$r("lanes.color")#</span><select name="color"><cfloop list="red,blue,amber,green,purple,slate" item="color"><option value="#color#" #lane.color==color ? "selected" : ""#>#$r("lanes.color.#color#")#</option></cfloop></select></label>
                                         <label><span>#$r("lanes.wip")#</span><input name="wipLimit" type="number" min="1" max="999" value="#isNull(lane.wip_limit) ? '' : encodeForHTMLAttribute(lane.wip_limit)#" placeholder="∞"></label>
+                                        <label class="lane-hidden-field"><span>#$r("lanes.visibility")#</span><span class="lane-hidden-control" title="#encodeForHTMLAttribute($r('lanes.hiddenHint'))#"><input name="hiddenFromMembers" type="checkbox" value="true" #laneHiddenFromMembers ? "checked" : ""#><span>#$r("lanes.hiddenFromMembers")#</span></span></label>
                                         <button class="button button-ghost button-small" type="submit">#$r("lanes.save")#</button>
                                     </form>
                                     <div class="lane-row-actions">
@@ -100,7 +102,7 @@
                                         <form method="post" action="/app/boards/#encodeForURL(selected.id)#/lanes/#encodeForURL(lane.id)#/delete" hx-post="/app/boards/#encodeForURL(selected.id)#/lanes/#encodeForURL(lane.id)#/delete" hx-target="##workspace-main" hx-select="##workspace-main" hx-swap="outerHTML" hx-confirm="#encodeForHTMLAttribute($r('lanes.deleteConfirm'))#"><input type="hidden" name="csrfToken" value="#encodeForHTMLAttribute(prc.boardCsrfToken)#"><button class="danger" type="submit" title="#encodeForHTMLAttribute($r('lanes.delete'))#"><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##trash"></use></svg></button></form>
                                     </div>
                                 <cfelse>
-                                    <div class="lane-readonly-details"><strong>#encodeForHTML(lane.name)#</strong><small>#lane.active_card_count# #$r("boards.cards")# · #isNull(lane.wip_limit) ? $r("lanes.noWip") : "WIP " & lane.wip_limit#</small></div>
+                                    <div class="lane-readonly-details"><span class="lane-readonly-heading"><strong>#encodeForHTML(lane.name)#</strong><cfif laneHiddenFromMembers><span class="lane-hidden-badge" title="#encodeForHTMLAttribute($r('lanes.hiddenHint'))#"><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##lock"></use></svg> #$r("lanes.hiddenBadge")#</span></cfif></span><small>#lane.active_card_count# #$r("boards.cards")# · #isNull(lane.wip_limit) ? $r("lanes.noWip") : "WIP " & lane.wip_limit#</small></div>
                                 </cfif>
                             </article>
                         </cfloop>
@@ -111,6 +113,7 @@
                             <label><span>#$r("lanes.newName")#</span><input name="name" required maxlength="120" placeholder="#encodeForHTMLAttribute($r('lanes.namePlaceholder'))#"></label>
                             <label><span>#$r("lanes.color")#</span><select name="color"><cfloop list="red,blue,amber,green,purple,slate" item="color"><option value="#color#">#$r("lanes.color.#color#")#</option></cfloop></select></label>
                             <label><span>#$r("lanes.wip")#</span><input name="wipLimit" type="number" min="1" max="999" placeholder="∞"></label>
+                            <label class="lane-hidden-field"><span>#$r("lanes.visibility")#</span><span class="lane-hidden-control" title="#encodeForHTMLAttribute($r('lanes.hiddenHint'))#"><input name="hiddenFromMembers" type="checkbox" value="true"><span>#$r("lanes.hiddenFromMembers")#</span></span></label>
                             <button class="button button-primary button-small" type="submit"><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##plus"></use></svg> #$r("lanes.add")#</button>
                         </form>
                     </cfif>

@@ -7,14 +7,22 @@ component singleton {
     ){
         var access = workspaceAccess( arguments.userId, arguments.workspaceId );
         if ( !access.found ) return { found=false };
+        var canManageBoards = listFindNoCase( "owner,admin", access.role ) > 0;
 
         var boards = queryExecute(
             "SELECT CAST(b.id AS TEXT) id,b.name,b.description,b.is_archived,b.created_at,b.position,
-                    COUNT(c.id) FILTER (WHERE c.archived_at IS NULL) active_card_count
-             FROM board b LEFT JOIN card c ON c.board_id=b.id
+                    COUNT(c.id) FILTER (
+                        WHERE c.archived_at IS NULL
+                          AND (card_lane.is_hidden_from_members=false OR CAST(:canViewHidden AS BOOLEAN))
+                    ) active_card_count
+             FROM board b
+             LEFT JOIN card c ON c.board_id=b.id
+             LEFT JOIN board_column card_lane
+               ON card_lane.id=c.column_id
+              AND card_lane.board_id=b.id
              WHERE b.workspace_id=CAST(:workspace AS UUID)
              GROUP BY b.id ORDER BY b.is_archived,b.position,b.created_at,b.name",
-            {workspace=arguments.workspaceId},{returntype="array"}
+            {workspace=arguments.workspaceId,canViewHidden=canManageBoards},{returntype="array"}
         );
         var activeBoards=[];
         var archivedBoards=[];
@@ -32,12 +40,14 @@ component singleton {
         if(selected.count()){
             lanes=queryExecute(
                 "SELECT CAST(bc.id AS TEXT) id,bc.name,bc.position,bc.wip_limit,bc.color,
+                        bc.is_hidden_from_members,
                         COUNT(c.id) card_count,
                         COUNT(c.id) FILTER (WHERE c.archived_at IS NULL) active_card_count
                  FROM board_column bc LEFT JOIN card c ON c.column_id=bc.id
                  WHERE bc.board_id=CAST(:board AS UUID) AND bc.is_archived=false
+                   AND (bc.is_hidden_from_members=false OR CAST(:canViewHidden AS BOOLEAN))
                  GROUP BY bc.id ORDER BY bc.position",
-                {board=selected.id},{returntype="array"}
+                {board=selected.id,canViewHidden=canManageBoards},{returntype="array"}
             );
         }
         var activeCount=activeBoards.len();
@@ -46,7 +56,7 @@ component singleton {
             found=true,
             role=access.role,
             plan=access.plan,
-            canManage=listFindNoCase("owner,admin",access.role)>0,
+            canManage=canManageBoards,
             canCreateBoard=maxBoards==0 || activeCount<maxBoards,
             maxBoards=maxBoards,
             activeBoards=activeBoards,
@@ -174,7 +184,8 @@ component singleton {
         required string boardId,
         required string name,
         string color = "red",
-        string wipLimit = ""
+        string wipLimit = "",
+        boolean hiddenFromMembers = false
     ){
         var access=boardAccess(arguments.userId,arguments.workspaceId,arguments.boardId);
         if(!canManage(access) || access.is_archived) return {success=false,code="forbidden"};
@@ -186,11 +197,18 @@ component singleton {
         )[1].total;
         if(laneCount>=20) return {success=false,code="lane_limit"};
         queryExecute(
-            "INSERT INTO board_column(board_id,name,position,wip_limit,color)
+            "INSERT INTO board_column(board_id,name,position,wip_limit,color,is_hidden_from_members)
              VALUES(CAST(:board AS UUID),:name,
                     (SELECT COALESCE(MAX(position),0)+1 FROM board_column WHERE board_id=CAST(:board AS UUID)),
-                    CASE WHEN :wip='' THEN NULL ELSE CAST(:wip AS INTEGER) END,:color)",
-            {board=arguments.boardId,name=validation.name,wip=validation.wip,color=validation.color}
+                    CASE WHEN :wip='' THEN NULL ELSE CAST(:wip AS INTEGER) END,:color,
+                    CAST(:hiddenFromMembers AS BOOLEAN))",
+            {
+                board=arguments.boardId,
+                name=validation.name,
+                wip=validation.wip,
+                color=validation.color,
+                hiddenFromMembers=arguments.hiddenFromMembers
+            }
         );
         return {success=true,boardId=arguments.boardId};
     }
@@ -202,7 +220,8 @@ component singleton {
         required string laneId,
         required string name,
         string color = "red",
-        string wipLimit = ""
+        string wipLimit = "",
+        boolean hiddenFromMembers = false
     ){
         var access=laneAccess(arguments.userId,arguments.workspaceId,arguments.boardId,arguments.laneId);
         if(!canManage(access) || access.is_archived) return {success=false,code="forbidden"};
@@ -211,9 +230,18 @@ component singleton {
         queryExecute(
             "UPDATE board_column SET name=:name,
                     wip_limit=CASE WHEN :wip='' THEN NULL ELSE CAST(:wip AS INTEGER) END,
-                    color=:color,updated_at=now()
+                    color=:color,
+                    is_hidden_from_members=CAST(:hiddenFromMembers AS BOOLEAN),
+                    updated_at=now()
              WHERE id=CAST(:lane AS UUID) AND board_id=CAST(:board AS UUID)",
-            {name=validation.name,wip=validation.wip,color=validation.color,lane=arguments.laneId,board=arguments.boardId}
+            {
+                name=validation.name,
+                wip=validation.wip,
+                color=validation.color,
+                hiddenFromMembers=arguments.hiddenFromMembers,
+                lane=arguments.laneId,
+                board=arguments.boardId
+            }
         );
         return {success=true,boardId=arguments.boardId};
     }

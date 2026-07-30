@@ -16,6 +16,7 @@ component singleton {
 			"c.archived_at IS NULL",
 			"b.is_archived=false",
 			"bc.is_archived=false",
+			"(bc.is_hidden_from_members=false OR current_member.role IN ('owner','admin'))",
 			"(c.completed_at IS NULL OR c.completed_at>=now()-INTERVAL '7 days')"
 		];
 
@@ -126,6 +127,7 @@ component singleton {
 			 WHERE c.workspace_id=CAST(:workspaceId AS UUID)
 			   AND c.assignee_id=CAST(:userId AS UUID)
 			   AND c.archived_at IS NULL
+			   AND (bc.is_hidden_from_members=false OR current_member.role IN ('owner','admin'))
 			   AND (c.completed_at IS NULL OR c.completed_at>=now()-INTERVAL '7 days')",
 			{ workspaceId=arguments.workspaceId, userId=arguments.userId },
 			{ returntype="array" }
@@ -144,6 +146,7 @@ component singleton {
 			            AND assigned.workspace_id=b.workspace_id
 			            AND assigned.assignee_id=CAST(:userId AS UUID)
 			            AND assigned.archived_at IS NULL
+			            AND (assigned_column.is_hidden_from_members=false OR current_member.role IN ('owner','admin'))
 			            AND (assigned.completed_at IS NULL OR assigned.completed_at>=now()-INTERVAL '7 days')
 			        ) AS assigned_count
 			 FROM board b
@@ -296,6 +299,7 @@ component singleton {
 				   AND c.assignee_id=CAST(:userId AS UUID)
 				   AND c.archived_at IS NULL
 				   AND wm.user_id=CAST(:userId AS UUID)
+				   AND (bc.is_hidden_from_members=false OR wm.role IN ('owner','admin'))
 				 FOR UPDATE OF c",
 				{ cardId=arguments.cardId, workspaceId=arguments.workspaceId, userId=arguments.userId },
 				{ returntype="array" }

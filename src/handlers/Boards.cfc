@@ -97,7 +97,8 @@ component {
         var result=boardManagementService.createLane(
             userId=prc.auth.id,workspaceId=prc.auth.workspaceId,
             boardId=cleanId(rc.boardId ?: ""),name=rc.name ?: "",
-            color=rc.color ?: "red",wipLimit=rc.wipLimit ?: ""
+            color=rc.color ?: "red",wipLimit=rc.wipLimit ?: "",
+            hiddenFromMembers=listFindNoCase("1,true,on,yes",rc.hiddenFromMembers ?: "false") > 0
         );
         finish(result,"lane_created",rc.boardId ?: "");
     }
@@ -107,7 +108,8 @@ component {
         var result=boardManagementService.updateLane(
             userId=prc.auth.id,workspaceId=prc.auth.workspaceId,
             boardId=cleanId(rc.boardId ?: ""),laneId=cleanId(rc.laneId ?: ""),
-            name=rc.name ?: "",color=rc.color ?: "red",wipLimit=rc.wipLimit ?: ""
+            name=rc.name ?: "",color=rc.color ?: "red",wipLimit=rc.wipLimit ?: "",
+            hiddenFromMembers=listFindNoCase("1,true,on,yes",rc.hiddenFromMembers ?: "false") > 0
         );
         finish(result,"lane_saved",rc.boardId ?: "");
     }

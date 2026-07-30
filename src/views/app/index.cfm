@@ -37,11 +37,13 @@
 
             <div class="workspace-board kanban-grid">
                 <cfloop array="#prc.workspaceBoard.columns#" item="column" index="columnIndex">
-                    <article class="kanban-column live-column#column.is_collapsed ? ' is-collapsed' : ''#" data-column-id="#encodeForHTMLAttribute( column.id )#" data-lane-width="#column.width_px#" data-lane-collapsed="#column.is_collapsed ? 'true' : 'false'#" style="--lane-width:#column.width_px#px">
+                    <cfset columnHiddenFromMembers=column.is_hidden_from_members ?: false>
+                    <article class="kanban-column live-column#column.is_collapsed ? ' is-collapsed' : ''##columnHiddenFromMembers ? ' is-hidden-from-members' : ''#" data-column-id="#encodeForHTMLAttribute( column.id )#" data-lane-width="#column.width_px#" data-lane-collapsed="#column.is_collapsed ? 'true' : 'false'#" data-hidden-from-members="#columnHiddenFromMembers ? 'true' : 'false'#" style="--lane-width:#column.width_px#px">
                         <header>
                             <span class="lane-heading">
                                 <span class="column-dot dot-#encodeForHTMLAttribute(column.color)#"></span>
                                 <strong>#encodeForHTML( column.name )#</strong>
+                                <cfif columnHiddenFromMembers && listFindNoCase("owner,admin",prc.workspaceBoard.board.role)><span class="lane-hidden-badge" title="#encodeForHTMLAttribute($r('lanes.hiddenHint'))#"><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##lock"></use></svg><span>#$r("lanes.hiddenBadge")#</span></span></cfif>
                                 <b data-card-count>#column.cards.len()#</b>
                                 <cfif !isNull( column.wip_limit )><em>WIP <span data-wip-count>#column.cards.len()#</span> / #column.wip_limit#</em></cfif>
                             </span>

@@ -24,9 +24,11 @@ component singleton {
 		for(var candidate in boards){
 			if(candidate.id==requestedBoardId){selectedBoard=candidate;break;}
 		}
+		var canViewHiddenLanes = listFindNoCase( "owner,admin", selectedBoard.role ) > 0;
 
 		var columns = queryExecute(
 			"SELECT CAST(bc.id AS TEXT) AS id, bc.name, bc.position, bc.wip_limit, bc.color,
+			        bc.is_hidden_from_members,
 			        COALESCE(preference.width_px, 280) AS width_px,
 			        COALESCE(preference.is_collapsed, false) AS is_collapsed
 			 FROM board_column bc
@@ -34,8 +36,13 @@ component singleton {
 			   ON preference.column_id = bc.id
 			  AND preference.user_id = CAST(:userId AS UUID)
 			 WHERE bc.board_id = CAST(:boardId AS UUID) AND bc.is_archived=false
+			   AND (bc.is_hidden_from_members=false OR CAST(:canViewHidden AS BOOLEAN))
 			 ORDER BY bc.position",
-			{ boardId = selectedBoard.id, userId = arguments.userId },
+			{
+				boardId = selectedBoard.id,
+				userId = arguments.userId,
+				canViewHidden = canViewHiddenLanes
+			},
 			{ returntype = "array" }
 		);
 		var cards = queryExecute(
@@ -46,6 +53,10 @@ component singleton {
 			        COALESCE(att.attachment_count, 0) AS attachment_count,
 			        COALESCE(att.attachment_names, '') AS attachment_names
 			 FROM card c
+			 JOIN board_column card_column
+			   ON card_column.id=c.column_id
+			  AND card_column.board_id=c.board_id
+			  AND card_column.is_archived=false
 			 LEFT JOIN app_user u ON u.id = c.assignee_id
 			 LEFT JOIN workspace_member assignee_membership
 			   ON assignee_membership.user_id=u.id
@@ -61,8 +72,9 @@ component singleton {
 			     WHERE a.card_id = c.id AND a.status = 'available' AND a.deleted_at IS NULL
 			 ) att ON true
 			 WHERE c.board_id = CAST(:boardId AS UUID) AND c.archived_at IS NULL
+			   AND (card_column.is_hidden_from_members=false OR CAST(:canViewHidden AS BOOLEAN))
 			 ORDER BY c.column_id, c.position, c.created_at",
-			{ boardId = selectedBoard.id },
+			{ boardId = selectedBoard.id, canViewHidden = canViewHiddenLanes },
 			{ returntype = "array" }
 		);
 		for ( var assignedCard in cards ) {
@@ -95,8 +107,10 @@ component singleton {
 			 JOIN workspace_member wm ON wm.workspace_id = b.workspace_id
 			 WHERE bc.id = CAST(:columnId AS UUID)
 			   AND bc.is_archived=false
+			   AND b.is_archived=false
 			   AND b.workspace_id = CAST(:workspaceId AS UUID)
-			   AND wm.user_id = CAST(:userId AS UUID)",
+			   AND wm.user_id = CAST(:userId AS UUID)
+			   AND (bc.is_hidden_from_members=false OR wm.role IN ('owner','admin'))",
 			{ columnId = arguments.columnId, workspaceId = arguments.workspaceId, userId = arguments.userId },
 			{ returntype = "array" }
 		);
@@ -140,11 +154,17 @@ component singleton {
 			        wm.role,target.wip_limit
 			 FROM card c
 			 JOIN workspace_member wm ON wm.workspace_id = c.workspace_id
+			 JOIN board_column source
+			   ON source.id=c.column_id
+			  AND source.board_id=c.board_id
+			  AND source.is_archived=false
 			 JOIN board_column target ON target.id = CAST(:columnId AS UUID) AND target.board_id = c.board_id AND target.is_archived=false
 			 WHERE c.id = CAST(:cardId AS UUID)
 			   AND c.workspace_id = CAST(:workspaceId AS UUID)
 			   AND wm.user_id = CAST(:userId AS UUID)
-			   AND c.archived_at IS NULL",
+			   AND c.archived_at IS NULL
+			   AND (source.is_hidden_from_members=false OR wm.role IN ('owner','admin'))
+			   AND (target.is_hidden_from_members=false OR wm.role IN ('owner','admin'))",
 			{
 				columnId = arguments.columnId,
 				cardId = arguments.cardId,
@@ -212,8 +232,23 @@ component singleton {
 					 SET column_id = CAST(:columnId AS UUID),
 					     started_at = COALESCE(started_at, now()),
 					     completed_at = CASE
-					         WHEN (SELECT position FROM board_column WHERE id = CAST(:columnId AS UUID)) =
-					              (SELECT MAX(position) FROM board_column WHERE board_id = CAST(:boardId AS UUID) AND is_archived=false)
+					         WHEN (
+					             SELECT is_hidden_from_members
+					             FROM board_column
+					             WHERE id = CAST(:columnId AS UUID)
+					         )
+					         THEN completed_at
+					         WHEN (
+					             SELECT position
+					             FROM board_column
+					             WHERE id = CAST(:columnId AS UUID)
+					         ) = (
+					             SELECT MAX(position)
+					             FROM board_column
+					             WHERE board_id = CAST(:boardId AS UUID)
+					               AND is_archived=false
+					               AND is_hidden_from_members=false
+					         )
 					         THEN now() ELSE NULL END,
 					     version = version + 1,
 					     updated_at = now()
@@ -313,7 +348,8 @@ component singleton {
 			 WHERE bc.id=CAST(:columnId AS UUID)
 			   AND bc.is_archived=false
 			   AND b.workspace_id=CAST(:workspaceId AS UUID)
-			   AND wm.user_id=CAST(:userId AS UUID)",
+			   AND wm.user_id=CAST(:userId AS UUID)
+			   AND (bc.is_hidden_from_members=false OR wm.role IN ('owner','admin'))",
 			{ columnId=arguments.columnId, workspaceId=arguments.workspaceId, userId=arguments.userId },
 			{ returntype="array" }
 		);
@@ -344,7 +380,8 @@ component singleton {
 			 FROM card c JOIN board b ON b.id=c.board_id JOIN board_column bc ON bc.id=c.column_id
 			 JOIN workspace_member access ON access.workspace_id=c.workspace_id
 			 WHERE c.id=CAST(:cardId AS UUID) AND c.workspace_id=CAST(:workspaceId AS UUID)
-			   AND access.user_id=CAST(:userId AS UUID) AND c.archived_at IS NULL",
+			   AND access.user_id=CAST(:userId AS UUID) AND c.archived_at IS NULL
+			   AND (bc.is_hidden_from_members=false OR access.role IN ('owner','admin'))",
 			{ cardId=arguments.cardId, workspaceId=arguments.workspaceId, userId=arguments.userId },
 			{ returntype="array" }
 		);

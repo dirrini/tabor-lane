@@ -87,9 +87,24 @@ component singleton {
 
     struct function getDownload( required string userId, required string workspaceId, required string attachmentId ){
         var rows=queryExecute(
-            "SELECT a.object_key FROM attachment a JOIN workspace_member wm ON wm.workspace_id=a.workspace_id
+            "SELECT a.object_key
+             FROM attachment a
+             JOIN card c
+               ON c.id=a.card_id
+              AND c.workspace_id=a.workspace_id
+              AND c.archived_at IS NULL
+             JOIN board b
+               ON b.id=c.board_id
+              AND b.workspace_id=c.workspace_id
+              AND b.is_archived=false
+             JOIN board_column bc
+               ON bc.id=c.column_id
+              AND bc.board_id=c.board_id
+              AND bc.is_archived=false
+             JOIN workspace_member wm ON wm.workspace_id=a.workspace_id
              WHERE a.id=CAST(:id AS UUID) AND a.workspace_id=CAST(:workspace AS UUID)
-               AND wm.user_id=CAST(:user AS UUID) AND a.status='available' AND a.deleted_at IS NULL",
+               AND wm.user_id=CAST(:user AS UUID) AND a.status='available' AND a.deleted_at IS NULL
+               AND (bc.is_hidden_from_members=false OR wm.role IN ('owner','admin'))",
             {id=arguments.attachmentId,workspace=arguments.workspaceId,user=arguments.userId},{returntype="array"}
         );
         return rows.len()?{success=true,url=s3StorageService.presign("GET",rows[1].object_key,60)}:{success=false};
@@ -112,10 +127,21 @@ component singleton {
 
     private struct function cardAccess(required string userId,required string workspaceId,required string cardId){
         var rows=queryExecute(
-            "SELECT wm.role,w.plan FROM card c JOIN workspace w ON w.id=c.workspace_id
+            "SELECT wm.role,w.plan
+             FROM card c
+             JOIN workspace w ON w.id=c.workspace_id
+             JOIN board b
+               ON b.id=c.board_id
+              AND b.workspace_id=c.workspace_id
+              AND b.is_archived=false
+             JOIN board_column bc
+               ON bc.id=c.column_id
+              AND bc.board_id=c.board_id
+              AND bc.is_archived=false
              JOIN workspace_member wm ON wm.workspace_id=c.workspace_id
              WHERE c.id=CAST(:card AS UUID) AND c.workspace_id=CAST(:workspace AS UUID)
-               AND wm.user_id=CAST(:user AS UUID) AND c.archived_at IS NULL",
+               AND wm.user_id=CAST(:user AS UUID) AND c.archived_at IS NULL
+               AND (bc.is_hidden_from_members=false OR wm.role IN ('owner','admin'))",
             {card=arguments.cardId,workspace=arguments.workspaceId,user=arguments.userId},{returntype="array"}
         );
         return rows.len()?{found=true,role=rows[1].role,plan=rows[1].plan}:{found=false};

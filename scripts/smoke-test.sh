@@ -611,7 +611,9 @@ curl --fail --silent --show-error --output /dev/null \
   --data-urlencode "direction=up"
 curl --fail --silent --show-error --cookie "$cookie_jar" \
   "$base_url/app/boards/manage?boardId=$managed_board_id" > "$boards_html"
-grep --quiet 'lane-color-purple" data-lane-id="'"$qa_lane_id"'" data-lane-name="QA&#x20;Review"' "$boards_html"
+grep 'data-lane-id="'"$qa_lane_id"'"' "$boards_html" \
+  | grep 'lane-color-purple' \
+  | grep --quiet 'data-lane-name="QA&#x20;Review"'
 grep --quiet 'name="wipLimit" type="number" min="1" max="999" value="1"' "$boards_html"
 
 curl --fail --silent --show-error --cookie "$cookie_jar" \
@@ -777,6 +779,93 @@ curl --fail --silent --show-error --cookie "$cookie_jar" \
   "$base_url/app?boardId=$managed_board_id" > "$app_html"
 grep --quiet "CI Delivery Board" "$app_html"
 
+curl --fail --silent --show-error --cookie "$cookie_jar" \
+  "$base_url/app/boards/manage?boardId=$managed_board_id" > "$boards_html"
+board_csrf_token="$(
+  sed -n '/action="\/app\/boards\/[^"]*\/update"/,/<\/form>/ s/.*name="csrfToken" value="\([^"]*\)".*/\1/p' \
+    "$boards_html" | head -1
+)"
+test -n "$board_csrf_token"
+
+curl --fail --silent --show-error --output /dev/null \
+  --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+  --request POST "$base_url/app/boards/$managed_board_id/lanes" \
+  --data-urlencode "csrfToken=$board_csrf_token" \
+  --data-urlencode "name=CI Hidden Archive" \
+  --data-urlencode "color=slate" \
+  --data-urlencode "wipLimit=" \
+  --data-urlencode "hiddenFromMembers=1"
+curl --fail --silent --show-error --cookie "$cookie_jar" \
+  "$base_url/app/boards/manage?boardId=$managed_board_id" > "$boards_html"
+hidden_lane_id="$(
+  sed -n '/data-lane-name="CI&#x20;Hidden&#x20;Archive"/ s/.*data-lane-id="\([^"]*\)".*/\1/p' \
+    "$boards_html" | head -1
+)"
+test -n "$hidden_lane_id"
+grep 'data-lane-id="'"$hidden_lane_id"'"' "$boards_html" \
+  | grep --quiet 'data-hidden-from-members="true"'
+grep --quiet "Hidden from members" "$boards_html"
+
+curl --fail --silent --show-error --cookie "$cookie_jar" \
+  "$base_url/app?boardId=$managed_board_id" > "$app_html"
+grep 'data-column-id="'"$hidden_lane_id"'"' "$app_html" \
+  | grep --quiet 'is-hidden-from-members'
+grep --quiet "CI Hidden Archive" "$app_html"
+board_card_csrf="$(sed -n 's/.*data-csrf-token="\([^"]*\)".*/\1/p' "$app_html" | head -1)"
+test -n "$board_card_csrf"
+
+curl --fail --silent --show-error --output /dev/null \
+  --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+  --request POST "$base_url/app/cards" \
+  --data-urlencode "csrfToken=$board_card_csrf" \
+  --data-urlencode "title=CI hidden archive card" \
+  --data-urlencode "description=Visible only to workspace administrators" \
+  --data-urlencode "columnId=$hidden_lane_id"
+curl --fail --silent --show-error --cookie "$cookie_jar" \
+  "$base_url/app?boardId=$managed_board_id" > "$app_html"
+hidden_card_id="$(
+  sed -n '/data-card-title="CI&#x20;hidden&#x20;archive&#x20;card"/ s/.*data-card-id="\([^"]*\)".*/\1/p' \
+    "$app_html" | head -1
+)"
+test -n "$hidden_card_id"
+
+curl --fail --silent --show-error --cookie "$cookie_jar" \
+  "$base_url/app/cards/$hidden_card_id" > "$card_html"
+hidden_card_csrf="$(sed -n 's/.*data-card-csrf-token="\([^"]*\)".*/\1/p' "$card_html" | head -1)"
+test -n "$hidden_card_csrf"
+printf 'Hidden lane attachment smoke test\n' > "$attachment_payload"
+hidden_attachment_size="$(wc -c < "$attachment_payload" | tr -d ' ')"
+hidden_presign_response="$(
+  curl --fail --silent --show-error \
+    --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+    --request POST "$base_url/app/cards/$hidden_card_id/attachments/presign" \
+    --data-urlencode "csrfToken=$hidden_card_csrf" \
+    --data-urlencode "filename=hidden-archive.txt" \
+    --data-urlencode "contentType=text/plain" \
+    --data-urlencode "size=$hidden_attachment_size"
+)"
+hidden_attachment_id="$(printf '%s' "$hidden_presign_response" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')"
+hidden_upload_url="$(printf '%s' "$hidden_presign_response" | sed -n 's/.*"uploadUrl":"\([^"]*\)".*/\1/p')"
+test -n "$hidden_attachment_id"
+test -n "$hidden_upload_url"
+hidden_upload_status="$(
+  curl --silent --show-error --output "$attachment_download" --write-out '%{http_code}' \
+    --request PUT --header "Content-Type: text/plain" \
+    --upload-file "$attachment_payload" "$hidden_upload_url"
+)"
+if [[ "$hidden_upload_status" != 2* ]]; then
+  echo "Hidden-lane attachment upload returned HTTP $hidden_upload_status" >&2
+  cat "$attachment_download" >&2
+  exit 1
+fi
+hidden_complete_response="$(
+  curl --fail --silent --show-error \
+    --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+    --request POST "$base_url/app/cards/$hidden_card_id/attachments/$hidden_attachment_id/complete" \
+    --data-urlencode "csrfToken=$hidden_card_csrf"
+)"
+printf '%s' "$hidden_complete_response" | grep --quiet '"success":true'
+
 curl --fail --silent --show-error --cookie "$cookie_jar" "$base_url/app/members" > "$members_html"
 invite_csrf_token="$(
   sed -n '/action="\/app\/members\/invite"/,/<\/form>/ s/.*name="csrfToken" value="\([^"]*\)".*/\1/p' \
@@ -835,15 +924,183 @@ member_verification_path="$(sed -n 's/.*data-development-verification href="\([^
 test -n "$member_verification_path"
 curl --fail --silent --show-error --cookie "$member_cookie_jar" --cookie-jar "$member_cookie_jar" \
   "$base_url$member_verification_path" > /dev/null
-curl --fail --silent --show-error --cookie "$member_cookie_jar" "$base_url/app" > "$app_html"
+
+curl --fail --silent --show-error --cookie "$cookie_jar" \
+  "$base_url/app/cards/$hidden_card_id" > "$card_html"
+hidden_card_csrf="$(sed -n 's/.*data-card-csrf-token="\([^"]*\)".*/\1/p' "$card_html" | head -1)"
+member_user_id="$(
+  grep -o 'value="[^"]*"[^>]*>CI Member</option>' "$card_html" \
+    | head -1 | sed -n 's/value="\([^"]*\)".*/\1/p'
+)"
+test -n "$hidden_card_csrf"
+test -n "$member_user_id"
+hidden_card_update_result="$(
+  curl --silent --show-error --output /dev/null --write-out '%{http_code}|%{redirect_url}' \
+    --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+    --request POST "$base_url/app/cards/$hidden_card_id" \
+    --data-urlencode "csrfToken=$hidden_card_csrf" \
+    --data-urlencode "title=CI hidden archive card" \
+    --data-urlencode "description=Visible only to workspace administrators" \
+    --data-urlencode "priority=low" \
+    --data-urlencode "assigneeId=$member_user_id" \
+    --data-urlencode "dueDate=" \
+    --data-urlencode "labels=archive"
+)"
+if [[ "$hidden_card_update_result" != 302*"updated=1" ]]; then
+  echo "Assigning the hidden card returned an unexpected result: $hidden_card_update_result" >&2
+  exit 1
+fi
+
+curl --fail --silent --show-error --cookie "$member_cookie_jar" \
+  "$base_url/app?boardId=$managed_board_id" > "$app_html"
 grep --quiet "CI Workspace" "$app_html"
 grep --quiet "member" "$app_html"
+if grep --quiet -E "CI Hidden Archive|CI hidden archive card|hidden-archive.txt|$hidden_lane_id|$hidden_card_id" "$app_html"; then
+  echo "The board exposed a hidden lane or one of its resources to a member" >&2
+  exit 1
+fi
+member_card_csrf="$(sed -n 's/.*data-csrf-token="\([^"]*\)".*/\1/p' "$app_html" | head -1)"
+test -n "$member_card_csrf"
+
+curl --fail --silent --show-error --cookie "$member_cookie_jar" \
+  "$base_url/app/boards/manage?boardId=$managed_board_id" > "$boards_html"
+if grep --quiet -E "CI Hidden Archive|$hidden_lane_id|data-hidden-from-members=\"true\"" "$boards_html"; then
+  echo "Board management exposed a hidden lane to a member" >&2
+  exit 1
+fi
+
+hidden_card_direct_result="$(
+  curl --silent --show-error --output /dev/null --write-out '%{http_code}|%{redirect_url}' \
+    --cookie "$member_cookie_jar" "$base_url/app/cards/$hidden_card_id"
+)"
+if [[ "$hidden_card_direct_result" != 302*"/app" ]]; then
+  echo "Direct hidden-card access returned an unexpected result: $hidden_card_direct_result" >&2
+  exit 1
+fi
+
+hidden_move_status="$(
+  curl --silent --show-error --output "$partial_html" --write-out '%{http_code}' \
+    --cookie "$member_cookie_jar" --cookie-jar "$member_cookie_jar" \
+    --request POST "$base_url/app/cards/$lane_safety_card_id/move" \
+    --data-urlencode "csrfToken=$member_card_csrf" \
+    --data-urlencode "columnId=$hidden_lane_id"
+)"
+test "$hidden_move_status" = "403"
+grep --quiet '"code":"forbidden"' "$partial_html"
+
+hidden_layout_status="$(
+  curl --silent --show-error --output "$partial_html" --write-out '%{http_code}' \
+    --cookie "$member_cookie_jar" --cookie-jar "$member_cookie_jar" \
+    --request POST "$base_url/app/lanes/$hidden_lane_id/layout" \
+    --data-urlencode "csrfToken=$member_card_csrf" \
+    --data-urlencode "widthPx=640" \
+    --data-urlencode "isCollapsed=true"
+)"
+test "$hidden_layout_status" = "403"
+grep --quiet '"code":"forbidden"' "$partial_html"
+
+hidden_presign_status="$(
+  curl --silent --show-error --output "$partial_html" --write-out '%{http_code}' \
+    --cookie "$member_cookie_jar" --cookie-jar "$member_cookie_jar" \
+    --request POST "$base_url/app/cards/$hidden_card_id/attachments/presign" \
+    --data-urlencode "csrfToken=$member_card_csrf" \
+    --data-urlencode "filename=member-bypass.txt" \
+    --data-urlencode "contentType=text/plain" \
+    --data-urlencode "size=20"
+)"
+test "$hidden_presign_status" = "422"
+grep --quiet '"code":"forbidden"' "$partial_html"
+
+hidden_download_result="$(
+  curl --silent --show-error --output /dev/null --write-out '%{http_code}|%{redirect_url}' \
+    --cookie "$member_cookie_jar" "$base_url/app/attachments/$hidden_attachment_id/download"
+)"
+if [[ "$hidden_download_result" != 302*"/app" ]]; then
+  echo "Direct hidden-attachment access returned an unexpected result: $hidden_download_result" >&2
+  exit 1
+fi
+
+hidden_create_result="$(
+  curl --silent --show-error --output /dev/null --write-out '%{http_code}|%{redirect_url}' \
+    --cookie "$member_cookie_jar" --cookie-jar "$member_cookie_jar" \
+    --request POST "$base_url/app/cards" \
+    --data-urlencode "csrfToken=$member_card_csrf" \
+    --data-urlencode "columnId=$hidden_lane_id" \
+    --data-urlencode "title=CI member hidden bypass"
+)"
+if [[ "$hidden_create_result" != 302*"/app" ]]; then
+  echo "Creating a card in a hidden lane returned an unexpected result: $hidden_create_result" >&2
+  exit 1
+fi
+
 curl --fail --silent --show-error --cookie "$member_cookie_jar" "$base_url/app/my-work" > "$my_work_html"
 if grep --quiet "CI managed card" "$my_work_html"; then
   echo "My Work exposed a card assigned to another user" >&2
   exit 1
 fi
+if grep --quiet -E "CI hidden archive card|CI Hidden Archive|hidden-archive.txt" "$my_work_html"; then
+  echo "My Work exposed an assigned card from a hidden lane" >&2
+  exit 1
+fi
 grep --quiet "Nothing assigned to you yet" "$my_work_html"
+
+curl --fail --silent --show-error --cookie "$cookie_jar" \
+  "$base_url/app/boards/manage?boardId=$managed_board_id" > "$boards_html"
+board_csrf_token="$(
+  sed -n '/action="\/app\/boards\/[^"]*\/update"/,/<\/form>/ s/.*name="csrfToken" value="\([^"]*\)".*/\1/p' \
+    "$boards_html" | head -1
+)"
+test -n "$board_csrf_token"
+curl --fail --silent --show-error --output /dev/null \
+  --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+  --request POST "$base_url/app/boards/$managed_board_id/lanes/$hidden_lane_id/update" \
+  --data-urlencode "csrfToken=$board_csrf_token" \
+  --data-urlencode "name=CI Hidden Archive" \
+  --data-urlencode "color=slate" \
+  --data-urlencode "wipLimit=" \
+  --data-urlencode "hiddenFromMembers=0"
+
+curl --fail --silent --show-error --cookie "$member_cookie_jar" \
+  "$base_url/app?boardId=$managed_board_id" > "$app_html"
+grep --quiet "CI Hidden Archive" "$app_html"
+grep --quiet "CI hidden archive card" "$app_html"
+curl --fail --silent --show-error --cookie "$member_cookie_jar" \
+  "$base_url/app/cards/$hidden_card_id" > "$card_html"
+grep --quiet "hidden-archive.txt" "$card_html"
+curl --fail --silent --show-error --cookie "$member_cookie_jar" \
+  "$base_url/app/my-work" > "$my_work_html"
+grep --quiet "CI hidden archive card" "$my_work_html"
+
+curl --fail --silent --show-error --output /dev/null \
+  --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+  --request POST "$base_url/app/boards/$managed_board_id/lanes/$hidden_lane_id/update" \
+  --data-urlencode "csrfToken=$board_csrf_token" \
+  --data-urlencode "name=CI Hidden Archive" \
+  --data-urlencode "color=slate" \
+  --data-urlencode "wipLimit=" \
+  --data-urlencode "hiddenFromMembers=1"
+curl --fail --silent --show-error --cookie "$member_cookie_jar" \
+  "$base_url/app?boardId=$managed_board_id" > "$app_html"
+if grep --quiet -E "CI Hidden Archive|CI hidden archive card|hidden-archive.txt" "$app_html"; then
+  echo "A lane remained visible to a member after being hidden again" >&2
+  exit 1
+fi
+curl --fail --silent --show-error --cookie "$member_cookie_jar" \
+  "$base_url/app/my-work" > "$my_work_html"
+if grep --quiet -E "CI hidden archive card|CI Hidden Archive|hidden-archive.txt" "$my_work_html"; then
+  echo "My Work retained a card after its lane was hidden again" >&2
+  exit 1
+fi
+
+curl --fail --silent --show-error --cookie "$cookie_jar" \
+  "$base_url/app?boardId=$managed_board_id" > "$app_html"
+grep --quiet "CI Hidden Archive" "$app_html"
+grep --quiet "CI hidden archive card" "$app_html"
+grep --quiet "hidden-archive.txt" "$app_html"
+if grep --quiet "CI member hidden bypass" "$app_html"; then
+  echo "A member created a card in a hidden lane through a known lane ID" >&2
+  exit 1
+fi
 
 if command -v docker > /dev/null 2>&1 \
   && smoke_db_user="$(docker compose exec -T postgres printenv POSTGRES_USER 2> /dev/null | tr -d '\r')" \
@@ -919,12 +1176,13 @@ if command -v docker > /dev/null 2>&1 \
   grep --quiet 'CI Secondary Workspace' "$my_work_html"
   grep --quiet '<option value="overdue" selected>Overdue</option>' "$my_work_html"
   selected_workspace_id="$(
-    docker compose exec -T postgres psql \
+    printf '%s\n' "SELECT last_workspace_id FROM app_user WHERE email=:'owner_email';" \
+      | docker compose exec -T postgres psql \
       --username "$smoke_db_user" \
       --dbname "$smoke_db_name" \
       --set owner_email="$test_email" \
       --tuples-only --no-align \
-      --command "SELECT last_workspace_id FROM app_user WHERE email=:'owner_email';" \
+      --file=- \
       | tr -d '\r[:space:]'
   )"
   test "$selected_workspace_id" = "$secondary_workspace_id"
@@ -990,12 +1248,13 @@ if command -v docker > /dev/null 2>&1 \
     exit 1
   fi
   fallback_workspace_id="$(
-    docker compose exec -T postgres psql \
+    printf '%s\n' "SELECT last_workspace_id FROM app_user WHERE email=:'owner_email';" \
+      | docker compose exec -T postgres psql \
       --username "$smoke_db_user" \
       --dbname "$smoke_db_name" \
       --set owner_email="$test_email" \
       --tuples-only --no-align \
-      --command "SELECT last_workspace_id FROM app_user WHERE email=:'owner_email';" \
+      --file=- \
       | tr -d '\r[:space:]'
   )"
   if [[ -z "$fallback_workspace_id" || "$fallback_workspace_id" = "$secondary_workspace_id" ]]; then

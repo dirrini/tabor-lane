@@ -208,6 +208,92 @@
     });
   };
 
+  const initAttachments = (root) => {
+    const attachmentForm = root.matches?.("[data-attachment-form]")
+      ? root
+      : root.querySelector?.("[data-attachment-form]");
+    if (attachmentForm && !attachmentForm.dataset.attachmentInitialized) {
+      attachmentForm.dataset.attachmentInitialized = "true";
+      attachmentForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const fileInput = attachmentForm.querySelector('input[type="file"]');
+        const submitButton = attachmentForm.querySelector('button[type="submit"]');
+        const submitLabel = attachmentForm.querySelector("[data-attachment-submit-label]");
+        const status = attachmentForm.querySelector("[data-attachment-status]");
+        const file = fileInput?.files?.[0];
+        if (!file) return;
+        submitButton.disabled = true;
+        const originalLabel = submitLabel.textContent;
+        submitLabel.textContent = attachmentForm.dataset.uploading;
+        status.textContent = "";
+        try {
+          const csrfToken = document.querySelector("[data-card-csrf-token]")?.dataset.cardCsrfToken;
+          const presignBody = new URLSearchParams({
+            csrfToken,
+            filename: file.name,
+            contentType: file.type || "application/octet-stream",
+            size: String(file.size),
+          });
+          const presignResponse = await fetch(attachmentForm.dataset.presignUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" },
+            body: presignBody,
+          });
+          const presign = await presignResponse.json();
+          const success = presign.success ?? presign.SUCCESS;
+          if (!presignResponse.ok || !success) throw new Error(presign.code ?? presign.CODE);
+          const attachmentId = presign.id ?? presign.ID;
+          const uploadUrl = presign.uploadUrl ?? presign.UPLOADURL;
+          const uploadResponse = await fetch(uploadUrl, {
+            method: "PUT",
+            headers: { "Content-Type": file.type || "application/octet-stream" },
+            body: file,
+          });
+          if (!uploadResponse.ok) throw new Error("upload_failed");
+          const completeBody = new URLSearchParams({ csrfToken });
+          const completeResponse = await fetch(
+            attachmentForm.dataset.completeUrlTemplate.replace("{id}", encodeURIComponent(attachmentId)),
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" },
+              body: completeBody,
+            }
+          );
+          const completed = await completeResponse.json();
+          if (!completeResponse.ok || !(completed.success ?? completed.SUCCESS)) {
+            throw new Error(completed.code ?? completed.CODE ?? "upload_failed");
+          }
+          const refreshUrl = `${window.location.pathname}?attached=1`;
+          if (window.htmx) {
+            window.htmx.ajax("GET", refreshUrl, {
+              target: "#workspace-main",
+              swap: "outerHTML show:top",
+            });
+          } else {
+            window.location.assign(refreshUrl);
+          }
+        } catch (error) {
+          const errorKey = String(error.message || "").replaceAll("_", "-");
+          status.textContent =
+            attachmentForm.dataset[
+              `error${errorKey.replace(/(^|-)([a-z])/g, (_, __, letter) => letter.toUpperCase())}`
+            ] || attachmentForm.dataset.errorDefault;
+        } finally {
+          submitButton.disabled = false;
+          submitLabel.textContent = originalLabel;
+        }
+      });
+    }
+    const scope = root.querySelectorAll ? root : document;
+    scope.querySelectorAll("[data-attachment-remove]").forEach((form) => {
+      if (form.dataset.removeInitialized) return;
+      form.dataset.removeInitialized = "true";
+      form.addEventListener("submit", (event) => {
+        if (!window.confirm(form.dataset.confirm)) event.preventDefault();
+      });
+    });
+  };
+
   const updateWorkspaceNavigation = (root) => {
     const workspaceMain = root.matches?.("[data-workspace-page]")
       ? root
@@ -236,6 +322,7 @@
     initPendingBilling(root);
     initWorkspaceBoard(root);
     initCardDetails(root);
+    initAttachments(root);
     updateWorkspaceNavigation(root);
   };
 

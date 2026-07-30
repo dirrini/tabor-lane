@@ -342,6 +342,8 @@ button { color: inherit; }
 
 .card-labels { display:flex; flex-wrap:wrap; gap:4px; margin-top:9px; }.card-labels span { padding:3px 6px; border-radius:999px; color:#78686b; background:#f3eded; font-size:7px; font-weight:700; }.priority-border-low { border-left:3px solid #6fa785; }.priority-border-medium { border-left:3px solid #d6a92d; }.priority-border-high { border-left:3px solid #df794a; }.priority-border-urgent { border-left:3px solid #b92f40; }
 
+.sr-only { position:absolute; width:1px; height:1px; padding:0; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }.card-attachment-form { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:end; gap:12px; padding:18px 22px; border-bottom:1px solid #eee8e8; }.card-attachment-form label { display:grid; gap:7px; color:#615558; font-size:9px; font-weight:700; }.card-attachment-form input[type=file] { min-height:42px; padding:8px; border:1px solid #d9d2d3; border-radius:8px; color:#75696c; background:#fff; font-size:9px; }.card-attachment-form input::file-selector-button { margin-right:10px; padding:7px 10px; border:0; border-radius:6px; color:var(--ink); background:#f3eeee; cursor:pointer; font-weight:700; }.card-attachment-form .button .icon { width:14px; height:14px; }.card-attachment-form > p { grid-column:1/-1; margin:0; color:#a02f3c; font-size:9px; }.card-attachment-list { display:grid; }.card-attachment { display:flex; align-items:center; gap:11px; padding:14px 22px; border-bottom:1px solid #f1ecec; }.card-attachment:last-child { border:0; }.card-attachment > .icon { width:18px; height:18px; flex:0 0 auto; color:var(--green); }.card-attachment > div { display:flex; min-width:0; flex:1; flex-direction:column; }.card-attachment strong { overflow:hidden; font-size:10px; text-overflow:ellipsis; white-space:nowrap; }.card-attachment small { margin-top:4px; color:#9a8f91; font-size:8px; }.card-attachment > a,.card-attachment > form button { display:grid; width:32px; height:32px; place-items:center; border:0; border-radius:7px; color:#776b6e; background:#f7f3f3; cursor:pointer; }.card-attachment > form { margin:0; }.card-attachment > form button { color:#a12f3c; }.card-attachment a .icon,.card-attachment button .icon { width:14px; height:14px; }
+
 @media (max-width: 980px) {
   .main-nav { margin-left: 20px; gap: 20px; }
   .login-link { display: none; }
@@ -387,6 +389,7 @@ button { color: inherit; }
   .quick-card-form { grid-template-columns:1fr; }.quick-card-form > div { width:100%; }.quick-card-form > div .button { flex:1; }
   .billing-upgrade { grid-template-columns:1fr; padding:24px; }.billing-summary { align-items:flex-start; flex-wrap:wrap; }.billing-summary .plan-status { margin-left:72px; }.billing-details dl { grid-template-columns:1fr; gap:15px; }
   .card-details-header h1 { font-size:22px; }.card-details-header { align-items:flex-start; flex-direction:column; }.card-form { grid-template-columns:1fr; padding:18px; }.card-form-wide,.card-form-submit { grid-column:auto; }.card-details-aside { grid-template-columns:1fr; }
+  .card-attachment-form { grid-template-columns:1fr; }.card-attachment-form .button { width:100%; }.card-attachment-form > p { grid-column:auto; }
 }
 
 @media (prefers-reduced-motion: reduce) {

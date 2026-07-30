@@ -16,7 +16,9 @@ history_restore_html="$(mktemp)"
 invitation_html="$(mktemp)"
 member_cookie_jar="$(mktemp)"
 member_signup_html="$(mktemp)"
-trap 'rm -f "$cookie_jar" "$signup_html" "$app_html" "$check_email_html" "$members_html" "$billing_html" "$profile_html" "$card_html" "$partial_html" "$history_restore_html" "$invitation_html" "$member_cookie_jar" "$member_signup_html"' EXIT
+attachment_payload="$(mktemp)"
+attachment_download="$(mktemp)"
+trap 'rm -f "$cookie_jar" "$signup_html" "$app_html" "$check_email_html" "$members_html" "$billing_html" "$profile_html" "$card_html" "$partial_html" "$history_restore_html" "$invitation_html" "$member_cookie_jar" "$member_signup_html" "$attachment_payload" "$attachment_download"' EXIT
 
 curl --fail --silent --show-error --cookie-jar "$cookie_jar" "$base_url/signup" > "$signup_html"
 csrf_token="$(sed -n 's/.*name="csrfToken" value="\([^"]*\)".*/\1/p' "$signup_html" | head -1)"
@@ -203,6 +205,65 @@ curl --fail --silent --show-error --cookie "$cookie_jar" \
   "$base_url/app/cards/$managed_card_id?commented=1" > "$card_html"
 grep --quiet "CI management comment" "$card_html"
 grep --quiet "added a comment" "$card_html"
+
+printf 'Tabor Lane attachment smoke test\n' > "$attachment_payload"
+attachment_size="$(wc -c < "$attachment_payload" | tr -d ' ')"
+presign_response="$(
+  curl --fail --silent --show-error \
+    --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+    --request POST "$base_url/app/cards/$managed_card_id/attachments/presign" \
+    --data-urlencode "csrfToken=$card_csrf_token" \
+    --data-urlencode "filename=ci-attachment.txt" \
+    --data-urlencode "contentType=text/plain" \
+    --data-urlencode "size=$attachment_size"
+)"
+attachment_id="$(printf '%s' "$presign_response" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')"
+upload_url="$(printf '%s' "$presign_response" | sed -n 's/.*"uploadUrl":"\([^"]*\)".*/\1/p')"
+test -n "$attachment_id"
+test -n "$upload_url"
+
+upload_status="$(
+  curl --silent --show-error --output "$attachment_download" --write-out '%{http_code}' \
+    --request PUT --header "Content-Type: text/plain" \
+    --upload-file "$attachment_payload" "$upload_url"
+)"
+if [[ "$upload_status" != 2* ]]; then
+  echo "Presigned attachment upload returned HTTP $upload_status" >&2
+  cat "$attachment_download" >&2
+  exit 1
+fi
+
+complete_response="$(
+  curl --fail --silent --show-error \
+    --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+    --request POST "$base_url/app/cards/$managed_card_id/attachments/$attachment_id/complete" \
+    --data-urlencode "csrfToken=$card_csrf_token"
+)"
+printf '%s' "$complete_response" | grep --quiet '"success":true'
+
+curl --fail --silent --show-error --cookie "$cookie_jar" \
+  "$base_url/app/cards/$managed_card_id?attached=1" > "$card_html"
+grep --quiet "ci-attachment.txt" "$card_html"
+grep --quiet "added an attachment" "$card_html"
+
+curl --fail --silent --show-error --location --cookie "$cookie_jar" \
+  "$base_url/app/attachments/$attachment_id/download" > "$attachment_download"
+cmp "$attachment_payload" "$attachment_download"
+
+attachment_remove_status="$(
+  curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+    --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+    --request POST "$base_url/app/cards/$managed_card_id/attachments/$attachment_id/remove" \
+    --data-urlencode "csrfToken=$card_csrf_token"
+)"
+test "$attachment_remove_status" = "302"
+curl --fail --silent --show-error --cookie "$cookie_jar" \
+  "$base_url/app/cards/$managed_card_id?attachmentRemoved=1" > "$card_html"
+if grep --quiet "ci-attachment.txt" "$card_html"; then
+  echo "Removed attachment remained visible on the card" >&2
+  exit 1
+fi
+grep --quiet "removed an attachment" "$card_html"
 
 card_archive_status="$(
   curl --silent --show-error --output /dev/null --write-out '%{http_code}' \

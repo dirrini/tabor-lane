@@ -6,6 +6,7 @@ component {
     property name="rateLimitService" inject="RateLimitService";
     property name="authService" inject="AuthService";
     property name="workspaceViewService" inject="WorkspaceViewService";
+    property name="attachmentService" inject="AttachmentService";
 
     this.allowedMethods = {
         index = "GET",
@@ -106,9 +107,17 @@ component {
         if ( !prc.cardDetails.found ) relocate( uri="/app" );
         prc.pageTitle = prc.cardDetails.card.title;
         prc.cardCsrfToken = csrfGenerateToken( "card-write" );
+        prc.attachments = attachmentService.getForCard(
+            userId=prc.auth.id,
+            workspaceId=prc.auth.workspaceId,
+            cardId=rc.cardId
+        );
         prc.logoutCsrfToken = csrfGenerateToken( "logout" );
         prc.canEditCard = prc.cardDetails.card.access_role != "viewer";
-        prc.notice = ( rc.updated ?: "" ) == "1"
+        prc.notice = ( rc.attachmentRemoved ?: "" ) == "1"
+            ? "attachmentRemoved"
+            : ( rc.attached ?: "" ) == "1" ? "attached"
+            : ( rc.updated ?: "" ) == "1"
             ? "saved"
             : ( rc.commented ?: "" ) == "1" ? "commented" : "";
         prc.error = rc.error ?: "";

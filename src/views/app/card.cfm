@@ -3,7 +3,7 @@
     locale = getFWLocale();
     dateMask = locale == "pt_BR" ? "dd/MM/yyyy 'às' HH:mm" : "MMM d, yyyy 'at' h:mm tt";
     labelsValue = card.labels_csv ?: "";
-    knownErrors = "expired,invalid,read_only,invalid_assignee,invalid_comment";
+    knownErrors = "expired,invalid,read_only,invalid_assignee,invalid_comment,attachment_storage";
     errorMessage = listFindNoCase( knownErrors, prc.error )
         ? $r( "card.error.#prc.error#" )
         : $r( "card.error" );
@@ -42,6 +42,28 @@
                     <label>#$r( "card.labels" )#<input name="labels" maxlength="410" value="#encodeForHTMLAttribute( labelsValue )#" #prc.canEditCard ? "" : "disabled"#><small>#$r( "card.labelsHint" )#</small></label>
                     <cfif prc.canEditCard><button class="button button-primary card-form-submit" type="submit">#$r( "card.save" )#</button></cfif>
                 </form>
+            </section>
+
+            <section class="card-panel">
+                <div class="panel-heading"><div><h2>#$r( "card.attachments" )#</h2><p>#$r( "card.attachment.hint" )#</p></div><span>#prc.attachments.len()#</span></div>
+                <cfif prc.canEditCard>
+                    <form class="card-attachment-form" data-attachment-form data-presign-url="/app/cards/#encodeForURL( card.id )#/attachments/presign" data-complete-url-template="/app/cards/#encodeForURL( card.id )#/attachments/{id}/complete" data-uploading="#encodeForHTMLAttribute( $r( 'card.attachment.uploading' ) )#" data-error-default="#encodeForHTMLAttribute( $r( 'card.attachment.error' ) )#" data-error-file-too-large="#encodeForHTMLAttribute( $r( 'card.attachment.error.file_too_large' ) )#" data-error-quota="#encodeForHTMLAttribute( $r( 'card.attachment.error.quota' ) )#" data-error-upload-failed="#encodeForHTMLAttribute( $r( 'card.attachment.error.upload_failed' ) )#">
+                        <label><span>#$r( "card.attachment.select" )#</span><input type="file" name="attachment" required></label>
+                        <button class="button button-primary button-small" type="submit"><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##paperclip"></use></svg><span data-attachment-submit-label>#$r( "card.attachment.upload" )#</span></button>
+                        <p role="status" aria-live="polite" data-attachment-status></p>
+                    </form>
+                </cfif>
+                <div class="card-attachment-list">
+                    <cfif !prc.attachments.len()><p class="card-empty-copy">#$r( "card.attachment.empty" )#</p></cfif>
+                    <cfloop array="#prc.attachments#" item="attachment">
+                        <article class="card-attachment">
+                            <svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##paperclip"></use></svg>
+                            <div><strong>#encodeForHTML( attachment.original_filename )#</strong><small>#numberFormat( attachment.size_bytes / 1048576, "0.00" )# MB · #encodeForHTML( attachment.uploader_name )#</small></div>
+                            <a href="/app/attachments/#encodeForURL( attachment.id )#/download" title="#encodeForHTMLAttribute( $r( 'card.attachment.download' ) )#"><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##external"></use></svg><span class="sr-only">#$r( "card.attachment.download" )#</span></a>
+                            <cfif prc.canEditCard><form method="post" action="/app/cards/#encodeForURL( card.id )#/attachments/#encodeForURL( attachment.id )#/remove" data-attachment-remove data-confirm="#encodeForHTMLAttribute( $r( 'card.attachment.removeConfirm' ) )#"><input type="hidden" name="csrfToken" value="#encodeForHTMLAttribute( prc.cardCsrfToken )#"><button type="submit" title="#encodeForHTMLAttribute( $r( 'card.attachment.remove' ) )#"><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##close"></use></svg><span class="sr-only">#$r( "card.attachment.remove" )#</span></button></form></cfif>
+                        </article>
+                    </cfloop>
+                </div>
             </section>
 
             <section class="card-panel">

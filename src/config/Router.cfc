@@ -14,6 +14,10 @@ component {
         route( "/app/profile" ).to( "Profile.index" );
         post( "/app/members/invite" ).to( "App.inviteMember" );
         route( "/app/members" ).to( "App.members" );
+        get( "/app/attachments/:attachmentId/download" ).to( "Attachments.download" );
+        post( "/app/cards/:cardId/attachments/:attachmentId/remove" ).to( "Attachments.remove" );
+        post( "/app/cards/:cardId/attachments/:attachmentId/complete" ).to( "Attachments.complete" );
+        post( "/app/cards/:cardId/attachments/presign" ).to( "Attachments.presign" );
         post( "/app/cards/:cardId/comments" ).to( "App.addCardComment" );
         post( "/app/cards/:cardId/archive" ).to( "App.archiveCard" );
         post( "/app/cards/:cardId/move" ).to( "App.moveCard" );

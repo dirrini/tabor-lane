@@ -124,6 +124,15 @@ replace MinIO with Cloudflare R2 by changing only the `STORAGE_*` environment
 variables. Files belong in object storage; attachment metadata and permissions
 belong in PostgreSQL.
 
+Uploads and downloads use short-lived S3 presigned URLs, so file contents do not
+pass through the Lucee container. Configure the R2 bucket CORS policy to allow
+the production application origin with `PUT`, `GET` and `HEAD`; keep the bucket
+private. `STORAGE_PUBLIC_ENDPOINT` must be the browser-reachable R2 S3 endpoint
+and can use the same value as `STORAGE_ENDPOINT` in production.
+
+Free workspaces can store files up to 10 MB each and 100 MB in total. Premium
+workspaces can store files up to 50 MB each and 5 GB in total.
+
 ## Delivery
 
 `ci.yml` validates translations, builds the application, starts the complete

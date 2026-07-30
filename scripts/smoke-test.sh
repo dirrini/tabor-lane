@@ -245,6 +245,9 @@ curl --fail --silent --show-error --cookie "$cookie_jar" \
   "$base_url/app/cards/$managed_card_id?attached=1" > "$card_html"
 grep --quiet "ci-attachment.txt" "$card_html"
 grep --quiet "added an attachment" "$card_html"
+grep --quiet 'id="card-attachments" class="card-panel"' "$card_html"
+grep --quiet 'target="_blank" rel="noopener"' "$card_html"
+grep --quiet 'hx-target="#card-attachments"' "$card_html"
 
 curl --fail --silent --show-error --location --cookie "$cookie_jar" \
   "$base_url/app/attachments/$attachment_id/download" > "$attachment_download"

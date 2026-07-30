@@ -44,7 +44,7 @@
                 </form>
             </section>
 
-            <section class="card-panel">
+            <section id="card-attachments" class="card-panel">
                 <div class="panel-heading"><div><h2>#$r( "card.attachments" )#</h2><p>#$r( "card.attachment.hint" )#</p></div><span>#prc.attachments.len()#</span></div>
                 <cfif prc.canEditCard>
                     <form class="card-attachment-form" data-attachment-form data-presign-url="/app/cards/#encodeForURL( card.id )#/attachments/presign" data-complete-url-template="/app/cards/#encodeForURL( card.id )#/attachments/{id}/complete" data-uploading="#encodeForHTMLAttribute( $r( 'card.attachment.uploading' ) )#" data-error-default="#encodeForHTMLAttribute( $r( 'card.attachment.error' ) )#" data-error-file-too-large="#encodeForHTMLAttribute( $r( 'card.attachment.error.file_too_large' ) )#" data-error-quota="#encodeForHTMLAttribute( $r( 'card.attachment.error.quota' ) )#" data-error-upload-failed="#encodeForHTMLAttribute( $r( 'card.attachment.error.upload_failed' ) )#">
@@ -59,8 +59,8 @@
                         <article class="card-attachment">
                             <svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##paperclip"></use></svg>
                             <div><strong>#encodeForHTML( attachment.original_filename )#</strong><small>#numberFormat( attachment.size_bytes / 1048576, "0.00" )# MB · #encodeForHTML( attachment.uploader_name )#</small></div>
-                            <a href="/app/attachments/#encodeForURL( attachment.id )#/download" title="#encodeForHTMLAttribute( $r( 'card.attachment.download' ) )#"><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##external"></use></svg><span class="sr-only">#$r( "card.attachment.download" )#</span></a>
-                            <cfif prc.canEditCard><form method="post" action="/app/cards/#encodeForURL( card.id )#/attachments/#encodeForURL( attachment.id )#/remove" data-attachment-remove data-confirm="#encodeForHTMLAttribute( $r( 'card.attachment.removeConfirm' ) )#"><input type="hidden" name="csrfToken" value="#encodeForHTMLAttribute( prc.cardCsrfToken )#"><button type="submit" title="#encodeForHTMLAttribute( $r( 'card.attachment.remove' ) )#"><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##close"></use></svg><span class="sr-only">#$r( "card.attachment.remove" )#</span></button></form></cfif>
+                            <a href="/app/attachments/#encodeForURL( attachment.id )#/download" target="_blank" rel="noopener" title="#encodeForHTMLAttribute( $r( 'card.attachment.download' ) )#"><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##external"></use></svg><span class="sr-only">#$r( "card.attachment.download" )#</span></a>
+                            <cfif prc.canEditCard><form method="post" action="/app/cards/#encodeForURL( card.id )#/attachments/#encodeForURL( attachment.id )#/remove" hx-post="/app/cards/#encodeForURL( card.id )#/attachments/#encodeForURL( attachment.id )#/remove" hx-target="##card-attachments" hx-select="##card-attachments" hx-swap="outerHTML" data-attachment-remove data-confirm="#encodeForHTMLAttribute( $r( 'card.attachment.removeConfirm' ) )#"><input type="hidden" name="csrfToken" value="#encodeForHTMLAttribute( prc.cardCsrfToken )#"><button type="submit" title="#encodeForHTMLAttribute( $r( 'card.attachment.remove' ) )#"><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##close"></use></svg><span class="sr-only">#$r( "card.attachment.remove" )#</span></button></form></cfif>
                         </article>
                     </cfloop>
                 </div>

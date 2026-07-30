@@ -266,8 +266,9 @@
           const refreshUrl = `${window.location.pathname}?attached=1`;
           if (window.htmx) {
             window.htmx.ajax("GET", refreshUrl, {
-              target: "#workspace-main",
-              swap: "outerHTML show:top",
+              target: "#card-attachments",
+              select: "#card-attachments",
+              swap: "outerHTML",
             });
           } else {
             window.location.assign(refreshUrl);

@@ -125,7 +125,9 @@ component {
         prc.analyticsReturnUrl = buildAnalyticsReturnUrl( prc.analyticsReturnFilters );
         prc.page = prc.returnTo == "my-work"
             ? "myWork"
-            : prc.returnTo == "analytics" ? "analytics" : "app";
+            : prc.returnTo == "analytics"
+                ? "analytics"
+                : prc.returnTo == "notifications" ? "notifications" : "app";
         prc.cardDetails = boardService.getCardDetails( prc.auth.id, prc.auth.workspaceId, rc.cardId ?: "" );
         if ( !prc.cardDetails.found ) relocate( uri="/app" );
         prc.pageTitle = prc.cardDetails.card.title;
@@ -191,6 +193,9 @@ component {
         if ( result.success && returnTo == "analytics" ) {
             relocate( uri=buildAnalyticsReturnUrl( normalizeAnalyticsReturnFilters( rc ) ) );
         }
+        if ( result.success && returnTo == "notifications" ) {
+            relocate( uri="/app/notifications" );
+        }
         var boardQuery=result.boardId ?: "";
         var failureUri = "/app/cards/" & rc.cardId
             & "?error=" & urlEncodedFormat( result.code ?: "generic" )
@@ -254,7 +259,7 @@ component {
 
     private string function normalizeCardReturnTo( required string value ) {
         var normalized = lCase( trim( arguments.value ) );
-        return listFindNoCase( "my-work,analytics", normalized ) ? normalized : "board";
+        return listFindNoCase( "my-work,analytics,notifications", normalized ) ? normalized : "board";
     }
 
     private struct function normalizeAnalyticsReturnFilters( required struct source ) {

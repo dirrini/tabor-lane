@@ -1,5 +1,7 @@
 component singleton {
 
+	property name="eventPublisherService" inject="EventPublisherService";
+
 	struct function getDashboard(
 		required string userId,
 		required string workspaceId,
@@ -289,7 +291,7 @@ component singleton {
 		var outcome = { success=false, code="forbidden" };
 		transaction {
 			var access = queryExecute(
-				"SELECT wm.role,c.version
+				"SELECT wm.role,c.version,c.title,CAST(c.board_id AS TEXT) AS board_id
 				 FROM card c
 				 JOIN board b ON b.id=c.board_id AND b.workspace_id=c.workspace_id AND b.is_archived=false
 				 JOIN board_column bc ON bc.id=c.column_id AND bc.board_id=c.board_id AND bc.is_archived=false
@@ -309,23 +311,41 @@ component singleton {
 			} else if ( access.len() && val( access[ 1 ].version ) != val( arguments.version ) ) {
 				outcome = { success=false, code="conflict" };
 			} else if ( access.len() ) {
-				queryExecute(
+				var updatedRows = queryExecute(
 					"UPDATE card
 					 SET priority=:priority,
 					     due_at=CASE WHEN :dueDate='' THEN NULL ELSE CAST(:dueDate AS DATE) END,
 					     version=version+1,
 					     updated_at=now()
-					 WHERE id=CAST(:cardId AS UUID)",
+					 WHERE id=CAST(:cardId AS UUID)
+					 RETURNING version",
 					{
 						priority=cleanPriority,
 						dueDate=trim( arguments.dueDate ),
 						cardId=arguments.cardId
-					}
+					},
+					{ returntype="array" }
 				);
 				queryExecute(
 					"INSERT INTO card_activity(card_id,actor_id,action)
 					 VALUES(CAST(:cardId AS UUID),CAST(:userId AS UUID),'updated')",
 					{ cardId=arguments.cardId, userId=arguments.userId }
+				);
+				var updatedPayload = {};
+				updatedPayload[ "cardTitle" ] = access[ 1 ].title;
+				updatedPayload[ "boardId" ] = access[ 1 ].board_id;
+				updatedPayload[ "priority" ] = cleanPriority;
+				updatedPayload[ "dueDate" ] = trim( arguments.dueDate );
+				updatedPayload[ "source" ] = "my-work";
+				eventPublisherService.publish(
+					workspaceId=arguments.workspaceId,
+					eventType="card.updated",
+					aggregateType="card",
+					aggregateId=arguments.cardId,
+					actorId=arguments.userId,
+					recipientUserIds=[],
+					payload=updatedPayload,
+					deduplicationKey="card.updated:#arguments.cardId#:#updatedRows[ 1 ].version#"
 				);
 				outcome = { success=true };
 			}

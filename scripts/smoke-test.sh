@@ -27,7 +27,11 @@ analytics_html="$(mktemp)"
 analytics_results_html="$(mktemp)"
 analytics_json="$(mktemp)"
 analytics_headers="$(mktemp)"
-trap 'rm -f "$cookie_jar" "$signup_html" "$app_html" "$check_email_html" "$members_html" "$billing_html" "$profile_html" "$card_html" "$partial_html" "$history_restore_html" "$invitation_html" "$member_cookie_jar" "$member_signup_html" "$attachment_payload" "$attachment_download" "$avatar_payload" "$avatar_before" "$avatar_after" "$boards_html" "$my_work_html" "$analytics_html" "$analytics_results_html" "$analytics_json" "$analytics_headers"' EXIT
+notifications_html="$(mktemp)"
+notification_partial_html="$(mktemp)"
+notification_write_html="$(mktemp)"
+notification_badge_html="$(mktemp)"
+trap 'rm -f "$cookie_jar" "$signup_html" "$app_html" "$check_email_html" "$members_html" "$billing_html" "$profile_html" "$card_html" "$partial_html" "$history_restore_html" "$invitation_html" "$member_cookie_jar" "$member_signup_html" "$attachment_payload" "$attachment_download" "$avatar_payload" "$avatar_before" "$avatar_after" "$boards_html" "$my_work_html" "$analytics_html" "$analytics_results_html" "$analytics_json" "$analytics_headers" "$notifications_html" "$notification_partial_html" "$notification_write_html" "$notification_badge_html"' EXIT
 
 assert_analytics_open_cards() {
   node -e '
@@ -38,6 +42,41 @@ assert_analytics_open_cards() {
     const expected=Number(process.argv[2]);
     if(actual!==expected) throw new Error(`Expected openCards=${expected}, received ${actual}`);
   ' "$1" "$2"
+}
+
+wait_for_notification_center() {
+  local cookie_file="$1"
+  local path="$2"
+  local output_file="$3"
+  local expected="$4"
+  local attempt
+  for attempt in $(seq 1 25); do
+    curl --fail --silent --show-error --cookie "$cookie_file" \
+      "$base_url$path" > "$output_file"
+    if grep --quiet "$expected" "$output_file"; then
+      return 0
+    fi
+    sleep 1
+  done
+  echo "Notification center did not contain '$expected' after waiting for the outbox scheduler" >&2
+  return 1
+}
+
+wait_for_notification_badge() {
+  local cookie_file="$1"
+  local expected_count="$2"
+  local output_file="$3"
+  local attempt
+  for attempt in $(seq 1 25); do
+    curl --fail --silent --show-error --cookie "$cookie_file" \
+      "$base_url/app/notifications/badge" > "$output_file"
+    if grep --quiet -E "id=\"notification-badge\"[^>]*>${expected_count}</span>" "$output_file"; then
+      return 0
+    fi
+    sleep 1
+  done
+  echo "Notification badge did not reach '$expected_count' after waiting for the outbox scheduler" >&2
+  return 1
 }
 
 curl --fail --silent --show-error --cookie-jar "$cookie_jar" "$base_url/signup" > "$signup_html"
@@ -118,7 +157,7 @@ grep --quiet 'name="returnTo" value="analytics"' "$card_html"
 grep --quiet 'name="returnFromDate" value="' "$card_html"
 grep --quiet 'name="returnToDate" value="' "$card_html"
 
-for partial_path in app app/my-work app/members app/profile app/billing app/boards/manage app/analytics; do
+for partial_path in app app/my-work app/members app/profile app/billing app/boards/manage app/analytics app/notifications; do
   curl --fail --silent --show-error --cookie "$cookie_jar" \
     --header "HX-Request: true" "$base_url/$partial_path" > "$partial_html"
   grep --quiet 'id="workspace-main"' "$partial_html"
@@ -1294,12 +1333,279 @@ curl --fail --silent --show-error --cookie "$member_cookie_jar" --cookie-jar "$m
   "$base_url$member_verification_path" > /dev/null
 
 curl --fail --silent --show-error --cookie "$cookie_jar" \
-  "$base_url/app/cards/$hidden_card_id" > "$card_html"
-hidden_card_csrf="$(sed -n 's/.*data-card-csrf-token="\([^"]*\)".*/\1/p' "$card_html" | head -1)"
+  "$base_url/app?boardId=$managed_board_id" > "$app_html"
+notification_card_csrf="$(
+  sed -n 's/.*data-csrf-token="\([^"]*\)".*/\1/p' "$app_html" | head -1
+)"
+notification_move_lane_id="$(
+  grep -o 'data-column-id="[^"]*"' "$app_html" \
+    | cut -d'"' -f2 \
+    | grep -v -E "^(${target_lane_id}|${hidden_lane_id})$" \
+    | head -1
+)"
+test -n "$notification_card_csrf"
+test -n "$notification_move_lane_id"
+
+notification_card_create_status="$(
+  curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+    --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+    --request POST "$base_url/app/cards" \
+    --data-urlencode "csrfToken=$notification_card_csrf" \
+    --data-urlencode "columnId=$target_lane_id" \
+    --data-urlencode "title=CI member notification card" \
+    --data-urlencode "description=Temporary card for notification smoke coverage"
+)"
+test "$notification_card_create_status" = "302"
+
+curl --fail --silent --show-error --cookie "$cookie_jar" \
+  "$base_url/app?boardId=$managed_board_id" > "$app_html"
+notification_card_id="$(
+  sed -n '/data-card-title="CI&#x20;member&#x20;notification&#x20;card"/ s/.*data-card-id="\([^"]*\)".*/\1/p' \
+    "$app_html" | head -1
+)"
+test -n "$notification_card_id"
+
+curl --fail --silent --show-error --cookie "$cookie_jar" \
+  "$base_url/app/cards/$notification_card_id" > "$card_html"
+notification_card_csrf="$(
+  sed -n 's/.*data-card-csrf-token="\([^"]*\)".*/\1/p' "$card_html" | head -1
+)"
 member_user_id="$(
   grep -o 'value="[^"]*"[^>]*>CI Member</option>' "$card_html" \
     | head -1 | sed -n 's/value="\([^"]*\)".*/\1/p'
 )"
+test -n "$notification_card_csrf"
+test -n "$member_user_id"
+
+notification_assignment_result="$(
+  curl --silent --show-error --output /dev/null --write-out '%{http_code}|%{redirect_url}' \
+    --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+    --request POST "$base_url/app/cards/$notification_card_id" \
+    --data-urlencode "csrfToken=$notification_card_csrf" \
+    --data-urlencode "title=CI member notification card" \
+    --data-urlencode "description=Temporary card for notification smoke coverage" \
+    --data-urlencode "priority=medium" \
+    --data-urlencode "assigneeId=$member_user_id" \
+    --data-urlencode "dueDate=" \
+    --data-urlencode "labels=notification"
+)"
+if [[ "$notification_assignment_result" != 302*"updated=1" ]]; then
+  echo "Assigning the notification card returned an unexpected result: $notification_assignment_result" >&2
+  exit 1
+fi
+
+# The scheduler processes the outbox independently; the inbox eventually exposes the assignment.
+wait_for_notification_center \
+  "$member_cookie_jar" \
+  "/app/notifications" \
+  "$notifications_html" \
+  "icon-card_assigned"
+grep --quiet '<!doctype html>' "$notifications_html"
+grep --quiet 'class="workspace-sidebar"' "$notifications_html"
+grep --quiet 'data-workspace-page="notifications"' "$notifications_html"
+grep --quiet 'href="/app/notifications" class="notification-nav-link active" aria-current="page"' \
+  "$notifications_html"
+grep --quiet 'id="notification-list"' "$notifications_html"
+grep --quiet 'class="notification-item is-unread"' "$notifications_html"
+grep --quiet 'icon-card_assigned' "$notifications_html"
+grep --quiet 'CI member notification card' "$notifications_html"
+
+curl --fail --silent --show-error --cookie "$member_cookie_jar" \
+  "$base_url/app/notifications/badge" > "$notification_badge_html"
+test "$(grep --count 'id="notification-badge"' "$notification_badge_html")" = "1"
+grep --quiet -E 'id="notification-badge"[^>]*>1</span>' "$notification_badge_html"
+if grep --quiet 'id="workspace-main"' "$notification_badge_html" \
+  || grep --quiet '<!doctype html>' "$notification_badge_html" \
+  || grep --quiet 'class="workspace-sidebar"' "$notification_badge_html"; then
+  echo "Notification badge endpoint unexpectedly included the workspace shell" >&2
+  exit 1
+fi
+
+# A list-targeted HTMX request returns only the notification center partial.
+curl --fail --silent --show-error --cookie "$member_cookie_jar" \
+  --header "HX-Request: true" \
+  --header "HX-Target: notification-list" \
+  "$base_url/app/notifications?filter=all&page=1" > "$notification_partial_html"
+test "$(grep --count 'id="notification-list"' "$notification_partial_html")" = "1"
+grep --quiet 'CI member notification card' "$notification_partial_html"
+if grep --quiet 'id="workspace-main"' "$notification_partial_html" \
+  || grep --quiet '<!doctype html>' "$notification_partial_html" \
+  || grep --quiet 'class="workspace-sidebar"' "$notification_partial_html"; then
+  echo "Notification list HTMX request unexpectedly included the workspace shell" >&2
+  exit 1
+fi
+
+# History restore must return the complete document, even when the original target was the list.
+curl --fail --silent --show-error --cookie "$member_cookie_jar" \
+  --header "HX-Request: true" \
+  --header "HX-Target: notification-list" \
+  --header "HX-History-Restore-Request: true" \
+  "$base_url/app/notifications?filter=all&page=1" > "$history_restore_html"
+grep --quiet '<!doctype html>' "$history_restore_html"
+grep --quiet 'class="workspace-sidebar"' "$history_restore_html"
+grep --quiet 'data-workspace-page="notifications"' "$history_restore_html"
+grep --quiet 'id="notification-list"' "$history_restore_html"
+
+if command -v docker > /dev/null 2>&1 \
+  && notification_db_user="$(docker compose exec -T postgres printenv POSTGRES_USER 2> /dev/null | tr -d '\r')" \
+  && notification_db_name="$(docker compose exec -T postgres printenv POSTGRES_DB 2> /dev/null | tr -d '\r')"; then
+  notification_assignment_state="$(
+    printf '%s\n' \
+      "SELECT COUNT(DISTINCT event_record.id)," \
+      "       COUNT(DISTINCT event_record.id) FILTER (" \
+      "         WHERE event_record.processed_at IS NOT NULL" \
+      "           AND event_record.failed_at IS NULL" \
+      "       )," \
+      "       COUNT(notification.id)," \
+      "       COUNT(DISTINCT (notification.event_id,notification.user_id))" \
+      "FROM outbox_event event_record" \
+      "LEFT JOIN app_notification notification" \
+      "  ON notification.event_id=event_record.id" \
+      " AND notification.user_id=(" \
+      "   SELECT id FROM app_user WHERE email=:'member_email'" \
+      " )" \
+      "WHERE event_record.aggregate_id=CAST(:'card_id' AS UUID)" \
+      "  AND event_record.event_type='card.assigned';" \
+      | docker compose exec -T postgres psql \
+        --username "$notification_db_user" \
+        --dbname "$notification_db_name" \
+        --set ON_ERROR_STOP=1 \
+        --set member_email="$invite_email" \
+        --set card_id="$notification_card_id" \
+        --quiet --tuples-only --no-align --field-separator='|' \
+        --file=- \
+      | tr -d '\r[:space:]'
+  )"
+  if [[ "$notification_assignment_state" != "1|1|1|1" ]]; then
+    echo "Unexpected assignment outbox/idempotency state: $notification_assignment_state" >&2
+    exit 1
+  fi
+fi
+
+notification_id="$(
+  sed -n 's@.*action="/app/notifications/\([^/"]*\)/read".*@\1@p' \
+    "$history_restore_html" | head -1
+)"
+notification_csrf="$(
+  grep -A 20 "action=\"/app/notifications/$notification_id/read\"" \
+    "$history_restore_html" \
+    | sed -n 's/.*name="csrfToken" value="\([^"]*\)".*/\1/p' \
+    | head -1
+)"
+test -n "$notification_id"
+test -n "$notification_csrf"
+
+mark_notification_status="$(
+  curl --silent --show-error --output "$notification_write_html" --write-out '%{http_code}' \
+    --cookie "$member_cookie_jar" --cookie-jar "$member_cookie_jar" \
+    --header "HX-Request: true" \
+    --header "HX-Target: notification-list" \
+    --request POST "$base_url/app/notifications/$notification_id/read" \
+    --data-urlencode "csrfToken=$notification_csrf" \
+    --data-urlencode "filter=all" \
+    --data-urlencode "page=1"
+)"
+test "$mark_notification_status" = "200"
+test "$(grep --count 'id="notification-list"' "$notification_write_html")" = "1"
+grep --quiet 'class="notification-item is-read"' "$notification_write_html"
+grep --quiet 'CI member notification card' "$notification_write_html"
+grep --quiet 'id="notification-badge"' "$notification_write_html"
+grep --quiet 'hx-swap-oob="outerHTML"' "$notification_write_html"
+grep --quiet -E 'id="notification-badge"[^>]*hidden[^>]*>0</span>' "$notification_write_html"
+if grep --quiet 'id="workspace-main"' "$notification_write_html" \
+  || grep --quiet '<!doctype html>' "$notification_write_html" \
+  || grep --quiet 'class="workspace-sidebar"' "$notification_write_html"; then
+  echo "Mark-one HTMX response unexpectedly included content outside #notification-list" >&2
+  exit 1
+fi
+
+curl --fail --silent --show-error --cookie "$member_cookie_jar" \
+  "$base_url/app/notifications/badge" > "$notification_badge_html"
+grep --quiet -E 'id="notification-badge"[^>]*hidden[^>]*>0</span>' "$notification_badge_html"
+
+notification_comment_status="$(
+  curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+    --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+    --request POST "$base_url/app/cards/$notification_card_id/comments" \
+    --data-urlencode "csrfToken=$notification_card_csrf" \
+    --data-urlencode "body=CI member notification comment"
+)"
+test "$notification_comment_status" = "302"
+
+notification_move_response="$(
+  curl --fail --silent --show-error \
+    --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+    --request POST "$base_url/app/cards/$notification_card_id/move" \
+    --data-urlencode "csrfToken=$notification_card_csrf" \
+    --data-urlencode "columnId=$notification_move_lane_id"
+)"
+printf '%s' "$notification_move_response" | grep --quiet '"success":true'
+
+wait_for_notification_badge "$member_cookie_jar" "2" "$notification_badge_html"
+curl --fail --silent --show-error --cookie "$member_cookie_jar" \
+  "$base_url/app/notifications?filter=all&page=1" > "$notifications_html"
+grep --quiet 'icon-card_commented' "$notifications_html"
+grep --quiet 'icon-card_moved' "$notifications_html"
+test "$(grep --count 'class="notification-item is-unread"' "$notifications_html")" = "2"
+
+grep --quiet -E 'id="notification-badge"[^>]*>2</span>' "$notification_badge_html"
+
+curl --fail --silent --show-error --location \
+  --cookie "$member_cookie_jar" --cookie-jar "$member_cookie_jar" \
+  "$base_url/locale/pt_BR" > /dev/null
+curl --fail --silent --show-error --cookie "$member_cookie_jar" \
+  "$base_url/app/notifications?filter=all&page=1" > "$notifications_html"
+grep --quiet 'data-workspace-page="notifications"' "$notifications_html"
+grep --quiet "Caixa de entrada" "$notifications_html"
+grep --quiet "Marcar todas como lidas" "$notifications_html"
+if ! grep --quiet --ignore-case -E '<time datetime="[^"]+">[0-9]{2}&#x2f;[0-9]{2}&#x2f;[0-9]{4} &agrave;s [0-9]{2}&#x3a;[0-9]{2}</time>' \
+  "$notifications_html"; then
+  echo "Brazilian Portuguese notification timestamp was rendered unexpectedly:" >&2
+  grep -o '<time[^>]*>[^<]*</time>' "$notifications_html" >&2 || true
+  exit 1
+fi
+
+notification_csrf="$(
+  sed -n '/action="\/app\/notifications\/read-all"/,/<\/form>/p' \
+    "$notifications_html" \
+    | sed -n 's/.*name="csrfToken" value="\([^"]*\)".*/\1/p' \
+    | head -1
+)"
+test -n "$notification_csrf"
+mark_all_status="$(
+  curl --silent --show-error --output "$notification_write_html" --write-out '%{http_code}' \
+    --cookie "$member_cookie_jar" --cookie-jar "$member_cookie_jar" \
+    --header "HX-Request: true" \
+    --header "HX-Target: notification-list" \
+    --request POST "$base_url/app/notifications/read-all" \
+    --data-urlencode "csrfToken=$notification_csrf" \
+    --data-urlencode "filter=unread"
+)"
+test "$mark_all_status" = "200"
+test "$(grep --count 'id="notification-list"' "$notification_write_html")" = "1"
+grep --quiet 'class="notification-empty-state"' "$notification_write_html"
+grep --quiet 'hx-swap-oob="outerHTML"' "$notification_write_html"
+grep --quiet -E 'id="notification-badge"[^>]*hidden[^>]*>0</span>' "$notification_write_html"
+if grep --quiet 'class="notification-item is-unread"' "$notification_write_html"; then
+  echo "Mark-all retained an unread notification" >&2
+  exit 1
+fi
+
+curl --fail --silent --show-error --location \
+  --cookie "$member_cookie_jar" --cookie-jar "$member_cookie_jar" \
+  "$base_url/locale/en_US" > /dev/null
+
+notification_archive_status="$(
+  curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+    --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+    --request POST "$base_url/app/cards/$notification_card_id/archive" \
+    --data-urlencode "csrfToken=$notification_card_csrf"
+)"
+test "$notification_archive_status" = "302"
+
+curl --fail --silent --show-error --cookie "$cookie_jar" \
+  "$base_url/app/cards/$hidden_card_id" > "$card_html"
+hidden_card_csrf="$(sed -n 's/.*data-card-csrf-token="\([^"]*\)".*/\1/p' "$card_html" | head -1)"
 test -n "$hidden_card_csrf"
 test -n "$member_user_id"
 hidden_card_update_result="$(
@@ -1317,6 +1623,62 @@ hidden_card_update_result="$(
 if [[ "$hidden_card_update_result" != 302*"updated=1" ]]; then
   echo "Assigning the hidden card returned an unexpected result: $hidden_card_update_result" >&2
   exit 1
+fi
+
+curl --fail --silent --show-error --cookie "$member_cookie_jar" \
+  "$base_url/app/notifications?filter=unread&page=1" > "$notifications_html"
+grep --quiet 'data-workspace-page="notifications"' "$notifications_html"
+grep --quiet 'class="notification-empty-state"' "$notifications_html"
+if grep --quiet -E "CI Hidden Archive|CI hidden archive card|$hidden_lane_id|$hidden_card_id" \
+  "$notifications_html"; then
+  echo "The notification center exposed an event from a hidden lane" >&2
+  exit 1
+fi
+
+curl --fail --silent --show-error --cookie "$member_cookie_jar" \
+  "$base_url/app/notifications/badge" > "$notification_badge_html"
+grep --quiet -E 'id="notification-badge"[^>]*hidden[^>]*>0</span>' "$notification_badge_html"
+
+if command -v docker > /dev/null 2>&1 \
+  && notification_db_user="$(docker compose exec -T postgres printenv POSTGRES_USER 2> /dev/null | tr -d '\r')" \
+  && notification_db_name="$(docker compose exec -T postgres printenv POSTGRES_DB 2> /dev/null | tr -d '\r')"; then
+  hidden_notification_state=""
+  for notification_attempt in $(seq 1 25); do
+    hidden_notification_state="$(
+      printf '%s\n' \
+      "SELECT COUNT(DISTINCT event_record.id)," \
+      "       COUNT(DISTINCT event_record.id) FILTER (" \
+      "         WHERE event_record.processed_at IS NOT NULL" \
+      "           AND event_record.failed_at IS NULL" \
+      "       )," \
+      "       COUNT(notification.id)" \
+      "FROM outbox_event event_record" \
+      "LEFT JOIN app_notification notification" \
+      "  ON notification.event_id=event_record.id" \
+      " AND notification.user_id=(" \
+      "   SELECT id FROM app_user WHERE email=:'member_email'" \
+      " )" \
+      "WHERE event_record.aggregate_id=CAST(:'card_id' AS UUID)" \
+      "  AND event_record.event_type='card.assigned';" \
+      | docker compose exec -T postgres psql \
+        --username "$notification_db_user" \
+        --dbname "$notification_db_name" \
+        --set ON_ERROR_STOP=1 \
+        --set member_email="$invite_email" \
+        --set card_id="$hidden_card_id" \
+        --quiet --tuples-only --no-align --field-separator='|' \
+        --file=- \
+        | tr -d '\r[:space:]'
+    )"
+    if [[ "$hidden_notification_state" = "1|1|0" ]]; then
+      break
+    fi
+    sleep 1
+  done
+  if [[ "$hidden_notification_state" != "1|1|0" ]]; then
+    echo "Unexpected hidden-lane notification state: $hidden_notification_state" >&2
+    exit 1
+  fi
 fi
 
 curl --fail --silent --show-error --cookie "$member_cookie_jar" \

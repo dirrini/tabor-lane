@@ -796,6 +796,7 @@
       myWork: "/app/my-work",
       app: "/app",
       members: "/app/members",
+      notifications: "/app/notifications",
       analytics: "/app/analytics",
     };
 
@@ -836,21 +837,39 @@
     }
   });
   document.body.addEventListener("htmx:beforeRequest", (event) => {
-    if (!event.detail?.elt?.closest?.("[data-analytics-filters]")) return;
-    document.querySelector("#analytics-results")?.setAttribute("aria-busy", "true");
-    const clientError = document.querySelector("[data-analytics-client-error]");
-    if (clientError) clientError.hidden = true;
+    const requestElement = event.detail?.elt;
+    if (requestElement?.closest?.("[data-analytics-filters]")) {
+      document.querySelector("#analytics-results")?.setAttribute("aria-busy", "true");
+      const clientError = document.querySelector("[data-analytics-client-error]");
+      if (clientError) clientError.hidden = true;
+    }
+    if (requestElement?.closest?.("#notification-list")) {
+      document.querySelector("#notification-list")?.setAttribute("aria-busy", "true");
+    }
   });
   document.body.addEventListener("htmx:afterRequest", (event) => {
-    if (!event.detail?.elt?.closest?.("[data-analytics-filters]")) return;
-    document.querySelector("#analytics-results")?.setAttribute("aria-busy", "false");
+    const requestElement = event.detail?.elt;
+    if (requestElement?.closest?.("[data-analytics-filters]")) {
+      document.querySelector("#analytics-results")?.setAttribute("aria-busy", "false");
+    }
+    if (requestElement?.closest?.("#notification-list")) {
+      document.querySelector("#notification-list")?.setAttribute("aria-busy", "false");
+    }
+    if (requestElement?.closest?.("[data-notification-open]") && event.detail?.successful) {
+      window.htmx?.trigger(document.body, "notification-read");
+    }
   });
   ["htmx:sendError", "htmx:responseError", "htmx:timeout"].forEach((eventName) => {
     document.body.addEventListener(eventName, (event) => {
-      if (!event.detail?.elt?.closest?.("[data-analytics-filters]")) return;
-      document.querySelector("#analytics-results")?.setAttribute("aria-busy", "false");
-      const clientError = document.querySelector("[data-analytics-client-error]");
-      if (clientError) clientError.hidden = false;
+      const requestElement = event.detail?.elt;
+      if (requestElement?.closest?.("[data-analytics-filters]")) {
+        document.querySelector("#analytics-results")?.setAttribute("aria-busy", "false");
+        const clientError = document.querySelector("[data-analytics-client-error]");
+        if (clientError) clientError.hidden = false;
+      }
+      if (requestElement?.closest?.("#notification-list")) {
+        document.querySelector("#notification-list")?.setAttribute("aria-busy", "false");
+      }
     });
   });
 })();

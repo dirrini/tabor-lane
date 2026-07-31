@@ -21,6 +21,11 @@
         backUrl = prc.analyticsReturnUrl;
         backKey = "card.backAnalytics";
         returnToValue = "analytics";
+    } else if ( prc.returnTo == "notifications" ) {
+        workspacePage = "notifications";
+        backUrl = "/app/notifications";
+        backKey = "card.backNotifications";
+        returnToValue = "notifications";
     }
     analyticsReturnFilters = prc.analyticsReturnFilters ?: {
         fromDate = "",

@@ -2,6 +2,7 @@ component singleton {
 
 	property name="tokenService" inject="TokenService";
 	property name="avatarService" inject="AvatarService";
+	property name="eventPublisherService" inject="EventPublisherService";
 
 	array function getUserWorkspaces( required string userId ){
 		return queryExecute(
@@ -233,15 +234,17 @@ component singleton {
 					{ returntype = "array" }
 				);
 				if ( consumed.len() ) {
-					queryExecute(
+					var joinedMembership = queryExecute(
 						"INSERT INTO workspace_member (workspace_id, user_id, role)
 						 VALUES (CAST(:workspaceId AS UUID), CAST(:userId AS UUID), :role)
-						 ON CONFLICT (workspace_id, user_id) DO NOTHING",
+						 ON CONFLICT (workspace_id, user_id) DO NOTHING
+						 RETURNING role",
 						{
 							workspaceId = invitation.workspace_id,
 							userId = arguments.userId,
 							role = invitation.role
-						}
+						},
+						{ returntype = "array" }
 					);
 					var effectiveMembership = queryExecute(
 						"SELECT role
@@ -264,6 +267,41 @@ component singleton {
 								userId = arguments.userId
 							}
 						);
+						if ( joinedMembership.len() ) {
+							var recipientRows = queryExecute(
+								"SELECT CAST(user_id AS TEXT) AS user_id
+								 FROM workspace_member
+								 WHERE workspace_id=CAST(:workspaceId AS UUID)
+								   AND role IN ('owner','admin')
+								   AND user_id<>CAST(:userId AS UUID)
+								 ORDER BY created_at,user_id",
+								{
+									workspaceId = invitation.workspace_id,
+									userId = arguments.userId
+								},
+								{ returntype = "array" }
+							);
+							var memberJoinedRecipients = [];
+							for ( var recipientRow in recipientRows ) {
+								memberJoinedRecipients.append( recipientRow.user_id );
+							}
+							var memberJoinedPayload = {};
+							memberJoinedPayload[ "workspaceName" ] = invitation.workspace_name;
+							memberJoinedPayload[ "memberId" ] = arguments.userId;
+							memberJoinedPayload[ "memberEmail" ] = normalizedEmail;
+							memberJoinedPayload[ "memberRole" ] = effectiveMembership[ 1 ].role;
+							memberJoinedPayload[ "invitationId" ] = invitation.id;
+							eventPublisherService.publish(
+								workspaceId = invitation.workspace_id,
+								eventType = "workspace.member_joined",
+								aggregateType = "workspace",
+								aggregateId = invitation.workspace_id,
+								actorId = arguments.userId,
+								recipientUserIds = memberJoinedRecipients,
+								payload = memberJoinedPayload,
+								deduplicationKey = "workspace.member_joined:#invitation.id#"
+							);
+						}
 						outcome = {
 							success = true,
 							workspaceId = invitation.workspace_id,

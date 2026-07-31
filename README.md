@@ -10,7 +10,9 @@ login and workspace invitations. Every independent account creates a Free
 workspace, links the user as its owner and provisions an initial board. Invited
 accounts join the existing workspace with their assigned role. Authenticated
 users can manage multiple boards and lanes, create complete cards and move them
-through workflows with changes persisted in PostgreSQL.
+through workflows with changes persisted in PostgreSQL. Domain changes are
+published through a transactional outbox and delivered to the in-app
+notification center without coupling card writes to external services.
 
 ## Technology
 
@@ -21,6 +23,7 @@ through workflows with changes persisted in PostgreSQL.
 - Docker Compose for the complete development environment
 - GitHub Actions for CI and multi-platform OCI deployment
 - Flyway migrations for local and managed PostgreSQL
+- PostgreSQL transactional outbox with a ColdBox scheduled processor
 - Neon PostgreSQL for production
 - Upstash Redis for distributed rate limiting
 - Brevo for transactional email
@@ -65,6 +68,8 @@ Use the pooled Neon hostname and require TLS. Production configuration includes:
 - `STRIPE_PRICE_PREMIUM_MONTHLY`, `STRIPE_PRICE_PREMIUM_YEARLY`
 - `BREVO_API_KEY`, `BREVO_SENDER_EMAIL`, `BREVO_SENDER_NAME`
 - `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`
+- `OUTBOX_PROCESSING_ENABLED`, `OUTBOX_BATCH_SIZE`, `OUTBOX_INTERVAL_SECONDS`
+- `OUTBOX_MAX_ATTEMPTS`, `OUTBOX_CLAIM_TIMEOUT_SECONDS`
 
 Database migrations live in `scripts/postgres/migrations`. They run before the
 application starts in both development and production.
@@ -145,12 +150,28 @@ as a soft delete to preserve transition history.
 Free workspaces can keep up to 3 active boards. Premium workspaces have no
 active-board limit.
 
+## Events and notifications
+
+Supported card lifecycle and workspace-membership changes write domain events
+to `outbox_event` in the same PostgreSQL transaction as the business operation.
+A ColdBox scheduled task claims pending events with row-level locking, creates
+idempotent in-app notifications and retries transient failures with exponential
+backoff. The claim protocol supports more than one application instance without
+processing the same event concurrently.
+
+The notification center is workspace-scoped, supports unread filtering and
+read state, and rechecks current membership and hidden-lane visibility before
+returning any card data. Set `OUTBOX_PROCESSING_ENABLED=false` on an application
+instance only when another instance is responsible for processing the shared
+outbox.
+
 ## Delivery
 
 `ci.yml` validates translations, builds the application, starts the complete
 stack and checks application, PostgreSQL and MinIO health. Its functional smoke
 test also covers account lifecycle, cards, attachments, members, boards, lanes,
-plan limits, archiving and WIP enforcement.
+plan limits, archiving, WIP enforcement, the transactional outbox and the
+notification center.
 
 `deploy-oci.yml` builds an immutable `amd64`/`arm64` image, publishes it to
 GHCR and deploys it to an OCI VM. The VM must already contain Docker, a GHCR

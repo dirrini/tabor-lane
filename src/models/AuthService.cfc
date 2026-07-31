@@ -2,6 +2,7 @@ component singleton {
 
 	property name="passwordService" inject="PasswordService";
 	property name="tokenService" inject="TokenService";
+	property name="eventPublisherService" inject="EventPublisherService";
 
 	struct function register(
 		required string displayName,
@@ -60,6 +61,15 @@ component singleton {
 					 SET accepted_at = now()
 					 WHERE id = CAST(:invitationId AS UUID)",
 					{ invitationId = invitation.id }
+				);
+				publishMemberJoined(
+					workspaceId=workspaceId,
+					workspaceName=workspaceDisplayName,
+					userId=userId,
+					email=normalizedEmail,
+					displayName=trim( arguments.displayName ),
+					role=workspaceRole,
+					invitationId=invitation.id
 				);
 			} else {
 				provisionWorkspace(
@@ -334,6 +344,15 @@ component singleton {
 						"UPDATE workspace_invitation SET accepted_at = now()
 						 WHERE id = CAST(:invitationId AS UUID)",
 						{ invitationId = invitation.id }
+					);
+					publishMemberJoined(
+						workspaceId=workspaceId,
+						workspaceName=workspaceDisplayName,
+						userId=userId,
+						email=normalizedEmail,
+						displayName=trim( arguments.displayName ),
+						role=workspaceRole,
+						invitationId=invitation.id
 					);
 				} else {
 					provisionWorkspace(
@@ -659,6 +678,51 @@ component singleton {
 				workspaceName = rows[ 1 ].workspace_name
 			}
 			: { found = false };
+	}
+
+	private void function publishMemberJoined(
+		required string workspaceId,
+		required string workspaceName,
+		required string userId,
+		required string email,
+		required string displayName,
+		required string role,
+		required string invitationId
+	){
+		var recipientRows = queryExecute(
+			"SELECT CAST(user_id AS TEXT) AS user_id
+			 FROM workspace_member
+			 WHERE workspace_id=CAST(:workspaceId AS UUID)
+			   AND role IN ('owner','admin')
+			   AND user_id<>CAST(:userId AS UUID)
+			 ORDER BY created_at,user_id",
+			{
+				workspaceId=arguments.workspaceId,
+				userId=arguments.userId
+			},
+			{ returntype="array" }
+		);
+		var recipients = [];
+		for ( var recipientRow in recipientRows ) {
+			recipients.append( recipientRow.user_id );
+		}
+		var payload = {};
+		payload[ "workspaceName" ] = arguments.workspaceName;
+		payload[ "memberId" ] = arguments.userId;
+		payload[ "memberEmail" ] = arguments.email;
+		payload[ "memberName" ] = arguments.displayName;
+		payload[ "memberRole" ] = arguments.role;
+		payload[ "invitationId" ] = arguments.invitationId;
+		eventPublisherService.publish(
+			workspaceId=arguments.workspaceId,
+			eventType="workspace.member_joined",
+			aggregateType="workspace",
+			aggregateId=arguments.workspaceId,
+			actorId=arguments.userId,
+			recipientUserIds=recipients,
+			payload=payload,
+			deduplicationKey="workspace.member_joined:#arguments.invitationId#"
+		);
 	}
 
 	private struct function mapUser( required struct row ){

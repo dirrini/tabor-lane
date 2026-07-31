@@ -17,6 +17,10 @@ component {
         route( "/app/profile" ).to( "Profile.index" );
         post( "/app/workspaces/:workspaceId/select" ).to( "Workspaces.select" );
         get( "/app/users/:userId/avatar" ).to( "Avatars.image" );
+        post( "/app/notifications/read-all" ).to( "Notifications.markAllRead" );
+        post( "/app/notifications/:notificationId/read" ).to( "Notifications.markRead" );
+        get( "/app/notifications/badge" ).to( "Notifications.badge" );
+        get( "/app/notifications" ).to( "Notifications.index" );
         get( "/app/analytics/metrics" ).to( "Analytics.metrics" );
         get( "/app/analytics" ).to( "Analytics.index" );
         post( "/app/my-work/cards/:cardId" ).to( "MyWork.updateCard" );

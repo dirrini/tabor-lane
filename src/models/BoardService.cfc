@@ -1,6 +1,7 @@
 component singleton {
 
 	property name="avatarService" inject="AvatarService";
+	property name="eventPublisherService" inject="EventPublisherService";
 
 	struct function getWorkspaceBoard( required string userId, required string workspaceId, string boardId = "" ){
 		var boards = queryExecute(
@@ -101,7 +102,7 @@ component singleton {
 		string description = ""
 	){
 		var access = queryExecute(
-			"SELECT CAST(bc.board_id AS TEXT) AS board_id, wm.role
+			"SELECT CAST(bc.board_id AS TEXT) AS board_id,bc.name AS lane_name,wm.role
 			 FROM board_column bc
 			 JOIN board b ON b.id = bc.board_id
 			 JOIN workspace_member wm ON wm.workspace_id = b.workspace_id
@@ -121,54 +122,72 @@ component singleton {
 			return { success = false, code = "read_only" };
 		}
 
-		var cardId = lCase( createUUID() );
-		queryExecute(
-			"WITH visible_lifecycle AS (
-			     SELECT MIN(position) AS first_position,MAX(position) AS last_position
-			     FROM board_column
-			     WHERE board_id=CAST(:boardId AS UUID)
-			       AND is_archived=false
-			       AND is_hidden_from_members=false
-			 )
-			 INSERT INTO card (
-			     id,workspace_id,board_id,column_id,title,description,position,started_at,completed_at
-			 )
-			 SELECT CAST(:cardId AS UUID),CAST(:workspaceId AS UUID),CAST(:boardId AS UUID),
-			        CAST(:columnId AS UUID),:title,:description,
-			        (
-			            SELECT COALESCE(MAX(existing.position),0)+1
-			            FROM card existing
-			            WHERE existing.column_id=CAST(:columnId AS UUID)
-			              AND existing.archived_at IS NULL
-			        ),
-			        CASE
-			            WHEN target.is_hidden_from_members=false
-			             AND target.position=visible_lifecycle.first_position
-			            THEN NULL
-			            ELSE now()
-			        END,
-			        CASE
-			            WHEN target.is_hidden_from_members=false
-			             AND target.position<>visible_lifecycle.first_position
-			             AND target.position=visible_lifecycle.last_position
-			            THEN now()
-			            ELSE NULL
-			        END
-			 FROM board_column target
-			 CROSS JOIN visible_lifecycle
-			 WHERE target.id=CAST(:columnId AS UUID)
-			   AND target.board_id=CAST(:boardId AS UUID)
-			   AND target.is_archived=false",
-			{
-				cardId = cardId,
+		var cardId = canonicalUuid( createUUID() );
+		var normalizedTitle = trim( arguments.title );
+		transaction {
+			queryExecute(
+				"WITH visible_lifecycle AS (
+				     SELECT MIN(position) AS first_position,MAX(position) AS last_position
+				     FROM board_column
+				     WHERE board_id=CAST(:boardId AS UUID)
+				       AND is_archived=false
+				       AND is_hidden_from_members=false
+				 )
+				 INSERT INTO card (
+				     id,workspace_id,board_id,column_id,title,description,position,started_at,completed_at
+				 )
+				 SELECT CAST(:cardId AS UUID),CAST(:workspaceId AS UUID),CAST(:boardId AS UUID),
+				        CAST(:columnId AS UUID),:title,:description,
+				        (
+				            SELECT COALESCE(MAX(existing.position),0)+1
+				            FROM card existing
+				            WHERE existing.column_id=CAST(:columnId AS UUID)
+				              AND existing.archived_at IS NULL
+				        ),
+				        CASE
+				            WHEN target.is_hidden_from_members=false
+				             AND target.position=visible_lifecycle.first_position
+				            THEN NULL
+				            ELSE now()
+				        END,
+				        CASE
+				            WHEN target.is_hidden_from_members=false
+				             AND target.position<>visible_lifecycle.first_position
+				             AND target.position=visible_lifecycle.last_position
+				            THEN now()
+				            ELSE NULL
+				        END
+				 FROM board_column target
+				 CROSS JOIN visible_lifecycle
+				 WHERE target.id=CAST(:columnId AS UUID)
+				   AND target.board_id=CAST(:boardId AS UUID)
+				   AND target.is_archived=false",
+				{
+					cardId = cardId,
+					workspaceId = arguments.workspaceId,
+					boardId = access[ 1 ].board_id,
+					columnId = arguments.columnId,
+					title = normalizedTitle,
+					description = trim( arguments.description )
+				}
+			);
+			recordActivity( cardId, arguments.userId, "created" );
+			var createdPayload = {};
+			createdPayload[ "cardTitle" ] = normalizedTitle;
+			createdPayload[ "boardId" ] = access[ 1 ].board_id;
+			createdPayload[ "laneId" ] = arguments.columnId;
+			createdPayload[ "laneName" ] = access[ 1 ].lane_name;
+			eventPublisherService.publish(
 				workspaceId = arguments.workspaceId,
-				boardId = access[ 1 ].board_id,
-				columnId = arguments.columnId,
-				title = trim( arguments.title ),
-				description = trim( arguments.description )
-			}
-		);
-		recordActivity( cardId, arguments.userId, "created" );
+				eventType = "card.created",
+				aggregateType = "card",
+				aggregateId = cardId,
+				actorId = arguments.userId,
+				recipientUserIds = [],
+				payload = createdPayload,
+				deduplicationKey = "card.created:#cardId#"
+			);
+		}
 		return { success = true, cardId = cardId, boardId = access[ 1 ].board_id };
 	}
 
@@ -179,10 +198,70 @@ component singleton {
 		required string columnId,
 		string beforeCardId = ""
 	){
+		var outcome = { success = false, code = "forbidden" };
+		transaction {
+			outcome = moveCardLocked(
+				userId = arguments.userId,
+				workspaceId = arguments.workspaceId,
+				cardId = arguments.cardId,
+				columnId = arguments.columnId,
+				beforeCardId = arguments.beforeCardId
+			);
+		}
+		return outcome;
+	}
+
+	private struct function moveCardLocked(
+		required string userId,
+		required string workspaceId,
+		required string cardId,
+		required string columnId,
+		string beforeCardId = ""
+	){
+		var cardHints = queryExecute(
+			"SELECT CAST(board_id AS TEXT) AS board_id
+			 FROM card
+			 WHERE id=CAST(:cardId AS UUID)
+			   AND workspace_id=CAST(:workspaceId AS UUID)",
+			{
+				cardId = arguments.cardId,
+				workspaceId = arguments.workspaceId
+			},
+			{ returntype = "array" }
+		);
+		if ( !cardHints.len() ) {
+			return { success = false, code = "forbidden" };
+		}
+
+		// Lock order: board mutex -> card/lanes -> ordered lane cards.
+		// The board mutex serializes WIP checks and reorder writes.
+		var boardLocks = queryExecute(
+			"SELECT id
+			 FROM board
+			 WHERE id=CAST(:boardId AS UUID)
+			   AND workspace_id=CAST(:workspaceId AS UUID)
+			   AND is_archived=false
+			 FOR UPDATE",
+			{
+				boardId = cardHints[ 1 ].board_id,
+				workspaceId = arguments.workspaceId
+			},
+			{ returntype = "array" }
+		);
+		if ( !boardLocks.len() ) {
+			return { success = false, code = "forbidden" };
+		}
+
 		var rows = queryExecute(
-			"SELECT CAST(c.column_id AS TEXT) AS from_column_id, CAST(c.board_id AS TEXT) AS board_id,
-			        wm.role,target.wip_limit
+			"SELECT CAST(c.column_id AS TEXT) AS from_column_id,source.name AS from_column_name,
+			        CAST(c.board_id AS TEXT) AS board_id,c.title AS card_title,c.version,
+			        COALESCE(CAST(c.assignee_id AS TEXT),'') AS assignee_id,
+			        wm.role,target.wip_limit,target.name AS to_column_name
 			 FROM card c
+			 JOIN board b
+			   ON b.id=c.board_id
+			  AND b.workspace_id=c.workspace_id
+			  AND b.is_archived=false
 			 JOIN workspace_member wm ON wm.workspace_id = c.workspace_id
 			 JOIN board_column source
 			   ON source.id=c.column_id
@@ -191,13 +270,17 @@ component singleton {
 			 JOIN board_column target ON target.id = CAST(:columnId AS UUID) AND target.board_id = c.board_id AND target.is_archived=false
 			 WHERE c.id = CAST(:cardId AS UUID)
 			   AND c.workspace_id = CAST(:workspaceId AS UUID)
+			   AND c.board_id = CAST(:boardId AS UUID)
 			   AND wm.user_id = CAST(:userId AS UUID)
 			   AND c.archived_at IS NULL
 			   AND (source.is_hidden_from_members=false OR wm.role IN ('owner','admin'))
-			   AND (target.is_hidden_from_members=false OR wm.role IN ('owner','admin'))",
+			   AND (target.is_hidden_from_members=false OR wm.role IN ('owner','admin'))
+			 FOR UPDATE OF c,source,target
+			 FOR SHARE OF wm",
 			{
 				columnId = arguments.columnId,
 				cardId = arguments.cardId,
+				boardId = cardHints[ 1 ].board_id,
 				workspaceId = arguments.workspaceId,
 				userId = arguments.userId
 			},
@@ -218,7 +301,8 @@ component singleton {
 				   AND id <> CAST(:cardId AS UUID)
 				   AND board_id = CAST(:boardId AS UUID)
 				   AND column_id = CAST(:columnId AS UUID)
-				   AND archived_at IS NULL",
+				   AND archived_at IS NULL
+				 FOR UPDATE",
 				{
 					beforeCardId = cleanBeforeCardId,
 					cardId = arguments.cardId,
@@ -241,23 +325,33 @@ component singleton {
 		}
 
 		var columnChanged = rows[ 1 ].from_column_id != arguments.columnId;
-		transaction {
-			queryExecute(
-				"SELECT id
+		var moveEventType = columnChanged ? "card.moved" : "card.reordered";
+		var moveRecipients = [];
+		if (
+			( rows[ 1 ].assignee_id ?: "" ).len()
+			&& compareNoCase( rows[ 1 ].assignee_id, arguments.userId ) != 0
+		) {
+			moveRecipients.append( rows[ 1 ].assignee_id );
+		}
+		var eventVersion = val( rows[ 1 ].version ) + 1;
+		queryExecute(
+			"SELECT id
 				 FROM card
 				 WHERE board_id = CAST(:boardId AS UUID)
 				   AND column_id IN (CAST(:fromColumnId AS UUID), CAST(:columnId AS UUID))
 				   AND archived_at IS NULL
+				 ORDER BY column_id,position,created_at,id
 				 FOR UPDATE",
 				{
 					boardId = rows[ 1 ].board_id,
 					fromColumnId = rows[ 1 ].from_column_id,
 					columnId = arguments.columnId
 				}
-			);
+		);
 
+			var versionRows = [];
 			if ( columnChanged ) {
-				queryExecute(
+				versionRows = queryExecute(
 					"UPDATE card
 					 SET column_id = CAST(:columnId AS UUID),
 					     started_at = COALESCE(started_at, now()),
@@ -282,13 +376,16 @@ component singleton {
 					         THEN now() ELSE NULL END,
 					     version = version + 1,
 					     updated_at = now()
-					 WHERE id = CAST(:cardId AS UUID)",
+					 WHERE id = CAST(:cardId AS UUID)
+					 RETURNING version",
 					{
 						columnId = arguments.columnId,
 						boardId = rows[ 1 ].board_id,
 						cardId = arguments.cardId
-					}
+					},
+					{ returntype = "array" }
 				);
+				if ( versionRows.len() ) eventVersion = val( versionRows[ 1 ].version );
 				queryExecute(
 					"INSERT INTO card_transition (workspace_id, card_id, from_column_id, to_column_id, actor_user_id)
 					 VALUES (CAST(:workspaceId AS UUID), CAST(:cardId AS UUID), CAST(:fromColumnId AS UUID),
@@ -302,10 +399,15 @@ component singleton {
 					}
 				);
 			} else {
-				queryExecute(
-					"UPDATE card SET version=version+1,updated_at=now() WHERE id=CAST(:cardId AS UUID)",
-					{ cardId=arguments.cardId }
+				versionRows = queryExecute(
+					"UPDATE card
+					 SET version=version+1,updated_at=now()
+					 WHERE id=CAST(:cardId AS UUID)
+					 RETURNING version",
+					{ cardId=arguments.cardId },
+					{ returntype="array" }
 				);
+				if ( versionRows.len() ) eventVersion = val( versionRows[ 1 ].version );
 			}
 
 			var targetCards = queryExecute(
@@ -358,8 +460,31 @@ component singleton {
 					);
 				}
 			}
-		}
-		recordActivity( arguments.cardId, arguments.userId, columnChanged ? "moved" : "reordered" );
+
+			recordActivity(
+				arguments.cardId,
+				arguments.userId,
+				columnChanged ? "moved" : "reordered"
+			);
+			var movePayload = {};
+			movePayload[ "cardTitle" ] = rows[ 1 ].card_title;
+			movePayload[ "boardId" ] = rows[ 1 ].board_id;
+			movePayload[ "fromLaneId" ] = rows[ 1 ].from_column_id;
+			movePayload[ "fromLaneName" ] = rows[ 1 ].from_column_name;
+			movePayload[ "toLaneId" ] = arguments.columnId;
+			movePayload[ "toLaneName" ] = rows[ 1 ].to_column_name;
+			movePayload[ "assigneeId" ] = rows[ 1 ].assignee_id;
+			movePayload[ "beforeCardId" ] = cleanBeforeCardId;
+		eventPublisherService.publish(
+				workspaceId = arguments.workspaceId,
+				eventType = moveEventType,
+				aggregateType = "card",
+				aggregateId = arguments.cardId,
+				actorId = arguments.userId,
+				recipientUserIds = moveRecipients,
+				payload = movePayload,
+				deduplicationKey = "#moveEventType#:#arguments.cardId#:#eventVersion#"
+		);
 		return { success = true };
 	}
 
@@ -405,7 +530,7 @@ component singleton {
 		var cards = queryExecute(
 			"SELECT CAST(c.id AS TEXT) id, c.title, c.description, c.priority, array_to_string(c.labels, ',') AS labels_csv,
 			        to_char(c.due_at AT TIME ZONE 'UTC','YYYY-MM-DD') due_date,
-			        CAST(c.assignee_id AS TEXT) assignee_id, c.created_at, c.updated_at,
+			        CAST(c.assignee_id AS TEXT) assignee_id, c.created_at, c.updated_at,c.version,
 			        CAST(b.id AS TEXT) board_id,b.name board_name, bc.name column_name, access.role AS access_role
 			 FROM card c JOIN board b ON b.id=c.board_id JOIN board_column bc ON bc.id=c.column_id
 			 JOIN workspace_member access ON access.workspace_id=c.workspace_id
@@ -459,14 +584,81 @@ component singleton {
 	}
 
 	struct function updateCard( required string userId, required string workspaceId, required string cardId, required struct data ){
-		var access=getCardDetails(arguments.userId,arguments.workspaceId,arguments.cardId);
+		var outcome = { success = false };
+		transaction {
+			outcome = updateCardLocked(
+				userId = arguments.userId,
+				workspaceId = arguments.workspaceId,
+				cardId = arguments.cardId,
+				data = arguments.data
+			);
+		}
+		return outcome;
+	}
+
+	private struct function updateCardLocked(
+		required string userId,
+		required string workspaceId,
+		required string cardId,
+		required struct data
+	){
+		var cardLockRows = queryExecute(
+			"SELECT 1
+			 FROM card
+			 WHERE id=CAST(:cardId AS UUID)
+			   AND workspace_id=CAST(:workspaceId AS UUID)
+			 FOR UPDATE",
+			{
+				cardId = arguments.cardId,
+				workspaceId = arguments.workspaceId
+			},
+			{ returntype = "array" }
+		);
+		if ( !cardLockRows.len() ) return { success = false };
+
+		var cardRows = queryExecute(
+			"SELECT c.title,c.description,c.priority,
+			        COALESCE(CAST(c.assignee_id AS TEXT),'') AS assignee_id,
+			        c.version,CAST(c.board_id AS TEXT) AS board_id,
+			        access.role AS access_role
+			 FROM card c
+			 JOIN board b
+			   ON b.id=c.board_id
+			  AND b.workspace_id=c.workspace_id
+			  AND b.is_archived=false
+			 JOIN board_column bc
+			   ON bc.id=c.column_id
+			  AND bc.board_id=c.board_id
+			  AND bc.is_archived=false
+			 JOIN workspace_member access
+			   ON access.workspace_id=c.workspace_id
+			  AND access.user_id=CAST(:userId AS UUID)
+			 WHERE c.id=CAST(:cardId AS UUID)
+			   AND c.workspace_id=CAST(:workspaceId AS UUID)
+			   AND c.archived_at IS NULL
+			   AND (bc.is_hidden_from_members=false OR access.role IN ('owner','admin'))
+			 FOR UPDATE OF c
+			 FOR SHARE OF access",
+			{
+				userId = arguments.userId,
+				cardId = arguments.cardId,
+				workspaceId = arguments.workspaceId
+			},
+			{ returntype = "array" }
+		);
+		var access = { found = cardRows.len() > 0 };
+		if ( access.found ) access[ "card" ] = cardRows[ 1 ];
 		if(!access.found) return {success=false};
 		if ( access.card.access_role == "viewer" ) return { success=false, code="read_only" };
 		var priority=listFindNoCase("none,low,medium,high,urgent",arguments.data.priority ?: "")?lCase(arguments.data.priority):"none";
 		var assignee=trim(arguments.data.assigneeId ?: "");
 		if ( assignee.len() ) {
 			var validAssignee=queryExecute(
-				"SELECT 1 FROM workspace_member WHERE workspace_id=CAST(:workspace AS UUID) AND user_id=CAST(:assignee AS UUID)",
+				"SELECT 1
+				 FROM workspace_member
+				 WHERE workspace_id=CAST(:workspace AS UUID)
+				   AND user_id=CAST(:assignee AS UUID)
+				 FOR SHARE",
 				{workspace=arguments.workspaceId,assignee=assignee},{returntype="array"}
 			);
 			if(!validAssignee.len()) return {success=false,code="invalid_assignee"};
@@ -478,42 +670,300 @@ component singleton {
 			if(cleanLabel.len() && !arrayFindNoCase(cleanLabels,cleanLabel)) cleanLabels.append(left(cleanLabel,40));
 			if(cleanLabels.len() == 10) break;
 		}
-		queryExecute(
+		var normalizedTitle = trim( arguments.data.title );
+		var normalizedDueDate = trim( arguments.data.dueDate ?: "" );
+		var previousAssignee = trim( access.card.assignee_id ?: "" );
+		var assignmentChanged = compareNoCase( previousAssignee, assignee ) != 0;
+		var eventVersion = val( access.card.version ) + 1;
+		var updateRows = queryExecute(
 			"UPDATE card SET title=:title,description=:description,priority=:priority,
 			 assignee_id=CASE WHEN :assignee='' THEN NULL ELSE CAST(:assignee AS UUID) END,
 			 due_at=CASE WHEN :dueDate='' THEN NULL ELSE CAST(:dueDate AS DATE) END,
 			 labels=string_to_array(:labels,','),version=version+1,updated_at=now()
-			 WHERE id=CAST(:cardId AS UUID) AND workspace_id=CAST(:workspaceId AS UUID)",
-			{title=trim(arguments.data.title),description=trim(arguments.data.description ?: ""),priority=priority,assignee=assignee,
-			 dueDate=trim(arguments.data.dueDate ?: ""),labels=arrayToList(cleanLabels),cardId=arguments.cardId,workspaceId=arguments.workspaceId}
+			 WHERE id=CAST(:cardId AS UUID)
+			   AND workspace_id=CAST(:workspaceId AS UUID)
+			   AND archived_at IS NULL
+			 RETURNING version",
+			{
+				title=normalizedTitle,
+				description=trim(arguments.data.description ?: ""),
+				priority=priority,
+				assignee=assignee,
+				dueDate=normalizedDueDate,
+				labels=arrayToList(cleanLabels),
+				cardId=arguments.cardId,
+				workspaceId=arguments.workspaceId
+			},
+			{ returntype="array" }
 		);
-		recordActivity(arguments.cardId,arguments.userId,"updated");
+		if ( !updateRows.len() ) return { success = false };
+		eventVersion = val( updateRows[ 1 ].version );
+		recordActivity( arguments.cardId, arguments.userId, "updated" );
+
+		var updatedPayload = {};
+		updatedPayload[ "cardTitle" ] = normalizedTitle;
+		updatedPayload[ "boardId" ] = access.card.board_id;
+		updatedPayload[ "priority" ] = priority;
+		updatedPayload[ "assigneeId" ] = assignee;
+		updatedPayload[ "dueDate" ] = normalizedDueDate;
+		updatedPayload[ "labels" ] = cleanLabels;
+		eventPublisherService.publish(
+			workspaceId = arguments.workspaceId,
+			eventType = "card.updated",
+			aggregateType = "card",
+			aggregateId = arguments.cardId,
+			actorId = arguments.userId,
+			recipientUserIds = [],
+			payload = updatedPayload,
+			deduplicationKey = "card.updated:#arguments.cardId#:#eventVersion#"
+		);
+
+		if ( assignmentChanged ) {
+			var assignedRecipients = [];
+			if ( assignee.len() ) assignedRecipients.append( assignee );
+			var assignedPayload = {};
+			assignedPayload[ "cardTitle" ] = normalizedTitle;
+			assignedPayload[ "boardId" ] = access.card.board_id;
+			assignedPayload[ "previousAssigneeId" ] = previousAssignee;
+			assignedPayload[ "assigneeId" ] = assignee;
+			eventPublisherService.publish(
+				workspaceId = arguments.workspaceId,
+				eventType = "card.assigned",
+				aggregateType = "card",
+				aggregateId = arguments.cardId,
+				actorId = arguments.userId,
+				recipientUserIds = assignedRecipients,
+				payload = assignedPayload,
+				deduplicationKey = "card.assigned:#arguments.cardId#:#eventVersion#"
+			);
+		}
 		return {success=true,boardId=access.card.board_id};
 	}
 
 	struct function addComment( required string userId, required string workspaceId, required string cardId, required string body ){
-		var access=getCardDetails(arguments.userId,arguments.workspaceId,arguments.cardId);
-		if(!access.found) return {success=false,code="forbidden"};
-		if(access.card.access_role=="viewer") return {success=false,code="read_only"};
-		if(!trim(arguments.body).len() || trim(arguments.body).len()>5000) return {success=false,code="invalid_comment"};
-		queryExecute("INSERT INTO card_comment(card_id,author_id,body) VALUES(CAST(:card AS UUID),CAST(:user AS UUID),:body)",
-			{card=arguments.cardId,user=arguments.userId,body=trim(arguments.body)});
-		recordActivity(arguments.cardId,arguments.userId,"commented");
+		var outcome = { success = false, code = "forbidden" };
+		transaction {
+			outcome = addCommentLocked(
+				userId = arguments.userId,
+				workspaceId = arguments.workspaceId,
+				cardId = arguments.cardId,
+				body = arguments.body
+			);
+		}
+		return outcome;
+	}
+
+	private struct function addCommentLocked(
+		required string userId,
+		required string workspaceId,
+		required string cardId,
+		required string body
+	){
+		var normalizedBody = trim( arguments.body );
+		if ( !normalizedBody.len() || normalizedBody.len() > 5000 ) {
+			return { success = false, code = "invalid_comment" };
+		}
+
+		var cardLockRows = queryExecute(
+			"SELECT 1
+			 FROM card
+			 WHERE id=CAST(:cardId AS UUID)
+			   AND workspace_id=CAST(:workspaceId AS UUID)
+			 FOR UPDATE",
+			{
+				cardId = arguments.cardId,
+				workspaceId = arguments.workspaceId
+			},
+			{ returntype = "array" }
+		);
+		if ( !cardLockRows.len() ) return { success = false, code = "forbidden" };
+
+		var cardRows = queryExecute(
+			"SELECT c.title,CAST(c.board_id AS TEXT) AS board_id,
+			        COALESCE(CAST(c.assignee_id AS TEXT),'') AS assignee_id,
+			        access.role AS access_role
+			 FROM card c
+			 JOIN board b
+			   ON b.id=c.board_id
+			  AND b.workspace_id=c.workspace_id
+			  AND b.is_archived=false
+			 JOIN board_column bc
+			   ON bc.id=c.column_id
+			  AND bc.board_id=c.board_id
+			  AND bc.is_archived=false
+			 JOIN workspace_member access
+			   ON access.workspace_id=c.workspace_id
+			  AND access.user_id=CAST(:userId AS UUID)
+			 WHERE c.id=CAST(:cardId AS UUID)
+			   AND c.workspace_id=CAST(:workspaceId AS UUID)
+			   AND c.archived_at IS NULL
+			   AND (bc.is_hidden_from_members=false OR access.role IN ('owner','admin'))
+			 FOR UPDATE OF c
+			 FOR SHARE OF access",
+			{
+				userId = arguments.userId,
+				cardId = arguments.cardId,
+				workspaceId = arguments.workspaceId
+			},
+			{ returntype = "array" }
+		);
+		if ( !cardRows.len() ) return { success = false, code = "forbidden" };
+		var card = cardRows[ 1 ];
+		if ( card.access_role == "viewer" ) return { success = false, code = "read_only" };
+
+		var commentRecipients = [];
+		if (
+			card.assignee_id.len()
+			&& compareNoCase( card.assignee_id, arguments.userId ) != 0
+		) {
+			commentRecipients.append( card.assignee_id );
+		}
+
+		var commentRows = queryExecute(
+			"INSERT INTO card_comment(card_id,author_id,body)
+			 VALUES(CAST(:card AS UUID),CAST(:user AS UUID),:body)
+			 RETURNING CAST(id AS TEXT) AS id",
+			{
+				card=arguments.cardId,
+				user=arguments.userId,
+				body=normalizedBody
+			},
+			{ returntype="array" }
+		);
+		var commentId = commentRows[ 1 ].id;
+		recordActivity( arguments.cardId, arguments.userId, "commented" );
+		var commentedPayload = {};
+		commentedPayload[ "cardTitle" ] = card.title;
+		commentedPayload[ "boardId" ] = card.board_id;
+		commentedPayload[ "commentId" ] = commentId;
+		commentedPayload[ "commentBody" ] = normalizedBody;
+		commentedPayload[ "assigneeId" ] = card.assignee_id;
+		eventPublisherService.publish(
+			workspaceId = arguments.workspaceId,
+			eventType = "card.commented",
+			aggregateType = "card",
+			aggregateId = arguments.cardId,
+			actorId = arguments.userId,
+			recipientUserIds = commentRecipients,
+			payload = commentedPayload,
+			deduplicationKey = "card.commented:#commentId#"
+		);
 		return {success=true};
 	}
 
 	struct function archiveCard( required string userId, required string workspaceId, required string cardId ){
-		var access=getCardDetails(arguments.userId,arguments.workspaceId,arguments.cardId);
-		if(!access.found) return {success=false,code="forbidden"};
-		if(access.card.access_role=="viewer") return {success=false,code="read_only"};
-		recordActivity(arguments.cardId,arguments.userId,"archived");
-		queryExecute("UPDATE card SET archived_at=now(),updated_at=now() WHERE id=CAST(:card AS UUID)",{card=arguments.cardId});
-		return {success=true,boardId=access.card.board_id};
+		var outcome = { success = false, code = "forbidden" };
+		transaction {
+			outcome = archiveCardLocked(
+				userId = arguments.userId,
+				workspaceId = arguments.workspaceId,
+				cardId = arguments.cardId
+			);
+		}
+		return outcome;
+	}
+
+	private struct function archiveCardLocked(
+		required string userId,
+		required string workspaceId,
+		required string cardId
+	){
+		var cardLockRows = queryExecute(
+			"SELECT 1
+			 FROM card
+			 WHERE id=CAST(:cardId AS UUID)
+			   AND workspace_id=CAST(:workspaceId AS UUID)
+			 FOR UPDATE",
+			{
+				cardId = arguments.cardId,
+				workspaceId = arguments.workspaceId
+			},
+			{ returntype = "array" }
+		);
+		if ( !cardLockRows.len() ) return { success = false, code = "forbidden" };
+
+		var cardRows = queryExecute(
+			"SELECT c.title,CAST(c.board_id AS TEXT) AS board_id,
+			        access.role AS access_role
+			 FROM card c
+			 JOIN board b
+			   ON b.id=c.board_id
+			  AND b.workspace_id=c.workspace_id
+			  AND b.is_archived=false
+			 JOIN board_column bc
+			   ON bc.id=c.column_id
+			  AND bc.board_id=c.board_id
+			  AND bc.is_archived=false
+			 JOIN workspace_member access
+			   ON access.workspace_id=c.workspace_id
+			  AND access.user_id=CAST(:userId AS UUID)
+			 WHERE c.id=CAST(:cardId AS UUID)
+			   AND c.workspace_id=CAST(:workspaceId AS UUID)
+			   AND c.archived_at IS NULL
+			   AND (bc.is_hidden_from_members=false OR access.role IN ('owner','admin'))
+			 FOR UPDATE OF c
+			 FOR SHARE OF access",
+			{
+				userId = arguments.userId,
+				cardId = arguments.cardId,
+				workspaceId = arguments.workspaceId
+			},
+			{ returntype = "array" }
+		);
+		if ( !cardRows.len() ) return { success = false, code = "forbidden" };
+		var card = cardRows[ 1 ];
+		if ( card.access_role == "viewer" ) return { success = false, code = "read_only" };
+
+		var archivedRows = queryExecute(
+			"UPDATE card
+			 SET archived_at=now(),updated_at=now()
+			 WHERE id=CAST(:cardId AS UUID)
+			   AND workspace_id=CAST(:workspaceId AS UUID)
+			   AND archived_at IS NULL
+			 RETURNING 1",
+			{
+				cardId = arguments.cardId,
+				workspaceId = arguments.workspaceId
+			},
+			{ returntype = "array" }
+		);
+		if ( !archivedRows.len() ) return { success = false, code = "forbidden" };
+
+		recordActivity( arguments.cardId, arguments.userId, "archived" );
+		var archivedPayload = {};
+		archivedPayload[ "cardTitle" ] = card.title;
+		archivedPayload[ "boardId" ] = card.board_id;
+		eventPublisherService.publish(
+			workspaceId = arguments.workspaceId,
+			eventType = "card.archived",
+			aggregateType = "card",
+			aggregateId = arguments.cardId,
+			actorId = arguments.userId,
+			recipientUserIds = [],
+			payload = archivedPayload,
+			deduplicationKey = "card.archived:#arguments.cardId#"
+		);
+		return { success = true, boardId = card.board_id };
 	}
 
 	private void function recordActivity(required string cardId,required string userId,required string action){
 		queryExecute("INSERT INTO card_activity(card_id,actor_id,action) VALUES(CAST(:card AS UUID),CAST(:user AS UUID),:action)",
 			{card=arguments.cardId,user=arguments.userId,action=arguments.action});
+	}
+
+	private string function canonicalUuid( required string value ){
+		var compact = lCase( replace( arguments.value, "-", "", "all" ) );
+		if ( !reFind( "^[0-9a-f]{32}$", compact ) ) {
+			throw(
+				type = "Board.InvalidUuid",
+				message = "Could not generate a valid card UUID."
+			);
+		}
+		return left( compact, 8 )
+			& "-" & mid( compact, 9, 4 )
+			& "-" & mid( compact, 13, 4 )
+			& "-" & mid( compact, 17, 4 )
+			& "-" & right( compact, 12 );
 	}
 
 }

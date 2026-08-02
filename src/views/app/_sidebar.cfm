@@ -8,8 +8,8 @@
     <cfif hasMultipleWorkspaces>
         <details class="workspace-picker-menu">
             <summary class="workspace-picker" aria-label="#encodeForHTMLAttribute( $r( 'app.workspace.choose' ) )#">
-                <span class="workspace-avatar">#encodeForHTML( left( prc.auth.workspaceName, 1 ) )#</span>
-                <span><small>#$r( "app.workspace" )#</small><strong>#encodeForHTML( prc.auth.workspaceName )#</strong></span>
+                <span class="workspace-avatar" data-current-workspace-initial>#encodeForHTML( left( prc.auth.workspaceName, 1 ) )#</span>
+                <span><small>#$r( "app.workspace" )#</small><strong data-current-workspace-name>#encodeForHTML( prc.auth.workspaceName )#</strong></span>
                 <b><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##chevron-down"></use></svg></b>
             </summary>
             <div class="workspace-picker-options" role="group" aria-label="#encodeForHTMLAttribute( $r( 'app.workspace.choose' ) )#">
@@ -17,8 +17,8 @@
                     <cfset isCurrentWorkspace = availableWorkspace.id == prc.auth.workspaceId>
                     <cfif isCurrentWorkspace>
                         <div class="workspace-picker-option current" aria-current="true">
-                            <span class="workspace-avatar">#encodeForHTML( left( availableWorkspace.name, 1 ) )#</span>
-                            <span><strong>#encodeForHTML( availableWorkspace.name )#</strong><small>#$r( "app.workspace.current" )#</small></span>
+                            <span class="workspace-avatar" data-current-workspace-initial>#encodeForHTML( left( availableWorkspace.name, 1 ) )#</span>
+                            <span><strong data-current-workspace-name>#encodeForHTML( availableWorkspace.name )#</strong><small>#$r( "app.workspace.current" )#</small></span>
                             <svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##check"></use></svg>
                         </div>
                     <cfelse>
@@ -35,8 +35,8 @@
         </details>
     <cfelse>
         <div class="workspace-picker">
-            <span class="workspace-avatar">#encodeForHTML( left( prc.auth.workspaceName, 1 ) )#</span>
-            <div><small>#$r( "app.workspace" )#</small><strong>#encodeForHTML( prc.auth.workspaceName )#</strong></div>
+            <span class="workspace-avatar" data-current-workspace-initial>#encodeForHTML( left( prc.auth.workspaceName, 1 ) )#</span>
+            <div><small>#$r( "app.workspace" )#</small><strong data-current-workspace-name>#encodeForHTML( prc.auth.workspaceName )#</strong></div>
         </div>
     </cfif>
     <nav hx-boost="true" hx-target="##workspace-main" hx-select="##workspace-main" hx-swap="outerHTML show:top" hx-push-url="true">
@@ -59,14 +59,14 @@
         </a>
         <a href="/app/analytics" class="#prc.page == 'analytics' ? 'active' : ''#" #prc.page == 'analytics' ? 'aria-current="page"' : ''#><span><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##chart"></use></svg></span>#$r( "app.analytics" )#</a>
         <a href="/app/automations" class="#prc.page == 'automations' ? 'active' : ''#" #prc.page == 'automations' ? 'aria-current="page"' : ''#><span><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##bolt"></use></svg></span>#$r( "app.automations" )#</a>
-        <a href="##"><span><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##settings"></use></svg></span>#$r( "app.settings" )#</a>
+        <a href="/app/settings" class="#prc.page == 'settings' ? 'active' : ''#" #prc.page == 'settings' ? 'aria-current="page"' : ''#><span><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##settings"></use></svg></span>#$r( "app.settings" )#</a>
     </nav>
     <a class="workspace-account #prc.page == 'profile' || prc.page == 'billing' ? 'active' : ''#" href="/app/profile" hx-get="/app/profile" hx-target="##workspace-main" hx-select="##workspace-main" hx-swap="outerHTML show:top" hx-push-url="true" #prc.page == 'profile' || prc.page == 'billing' ? 'aria-current="page"' : ''#>
         <span class="user-avatar account-avatar" data-current-user-avatar>
             <span data-avatar-initials>#encodeForHTML( prc.currentUserInitials )#</span>
             <cfif prc.currentUserAvatar.available><img src="#encodeForHTMLAttribute( prc.currentUserAvatar.url )#" alt=""></cfif>
         </span>
-        <div><strong>#encodeForHTML( prc.auth.displayName )#</strong><small>#encodeForHTML( $r( "workspace.role.#prc.auth.role#", prc.auth.role ) )# &middot; #encodeForHTML( prc.auth.email )#</small></div>
+        <div><strong>#encodeForHTML( prc.auth.displayName )#</strong><small><span data-current-workspace-role>#encodeForHTML( $r( "workspace.role.#prc.auth.role#", prc.auth.role ) )#</span> &middot; #encodeForHTML( prc.auth.email )#</small></div>
     </a>
     <form method="post" action="/auth/logout"><input type="hidden" name="csrfToken" value="#encodeForHTMLAttribute( prc.logoutCsrfToken )#"><button class="workspace-back" type="submit"><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##arrow-left"></use></svg> #$r( "app.logout" )#</button></form>
 </aside>

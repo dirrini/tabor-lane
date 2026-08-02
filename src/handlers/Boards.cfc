@@ -54,7 +54,7 @@ component {
         var result=boardManagementService.createBoard(
             userId=prc.auth.id,workspaceId=prc.auth.workspaceId,
             name=rc.name ?: "",description=rc.description ?: "",
-            template=rc.template ?: "blank",locale=getFWLocale()
+            template=rc.template ?: "blank"
         );
         finish(result,"created");
     }

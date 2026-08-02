@@ -464,6 +464,7 @@ component singleton {
 			|| find( "subscription", normalizedEventType )
 			|| find( "payment", normalizedEventType )
 		) return "/app/profile";
+		if ( find( "ownership", normalizedEventType ) ) return "/app/settings";
 		return "/app";
 	}
 

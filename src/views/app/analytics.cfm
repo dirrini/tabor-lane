@@ -8,6 +8,7 @@
 	};
 	analyticsBoards = analyticsOptions.boards ?: [];
 	analyticsMembers = analyticsOptions.members ?: [];
+	analyticsTimezone = prc.analytics.period.timezone ?: "UTC";
 </cfscript>
 <cfoutput>
 <cfif prc.isHtmxRequest><title>#encodeForHTML( prc.pageTitle )#</title></cfif>
@@ -72,7 +73,7 @@
 				#$r( "analytics.filter.clear" )#
 			</a>
 		</div>
-		<p class="analytics-filter-help">#$r( "analytics.filter.maxRange" )# &middot; #$r( "analytics.filter.timezone" )#: UTC</p>
+		<p class="analytics-filter-help">#$r( "analytics.filter.maxRange" )# &middot; #$r( "analytics.filter.timezone" )#: #encodeForHTML( analyticsTimezone )#</p>
 		<span id="analytics-loading" class="analytics-loading" role="status" aria-live="polite">
 			<svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##chart"></use></svg>
 			#$r( "analytics.loading" )#

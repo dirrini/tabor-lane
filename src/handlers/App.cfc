@@ -49,7 +49,7 @@ component {
         prc.pageTitle = $r( "members.title" );
         prc.members = workspaceService.getMembers( prc.auth.id, prc.auth.workspaceId );
         prc.invitations = workspaceService.getPendingInvitations( prc.auth.id, prc.auth.workspaceId );
-        prc.canInvite = listFindNoCase( "owner,admin", prc.auth.role ) > 0;
+        prc.canInvite = workspaceService.canInviteMembers( prc.auth.id, prc.auth.workspaceId );
         prc.inviteCsrfToken = csrfGenerateToken( "invite-member" );
         prc.logoutCsrfToken = csrfGenerateToken( "logout" );
         prc.notice = rc.invited ?: "";
@@ -76,8 +76,7 @@ component {
             workspaceId = prc.auth.workspaceId,
             inviteeName = rc.inviteeName,
             email = rc.email,
-            role = rc.role ?: "member",
-            locale = getFWLocale()
+            role = rc.role ?: "member"
         );
         if ( !result.success ) {
             relocate( uri = "/app/members?error=#urlEncodedFormat( result.code )#" );

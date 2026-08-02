@@ -33,7 +33,8 @@ notification_write_html="$(mktemp)"
 notification_badge_html="$(mktemp)"
 automations_html="$(mktemp)"
 automation_panel_html="$(mktemp)"
-trap 'rm -f "$cookie_jar" "$signup_html" "$app_html" "$check_email_html" "$members_html" "$billing_html" "$profile_html" "$card_html" "$partial_html" "$history_restore_html" "$invitation_html" "$member_cookie_jar" "$member_signup_html" "$attachment_payload" "$attachment_download" "$avatar_payload" "$avatar_before" "$avatar_after" "$boards_html" "$my_work_html" "$analytics_html" "$analytics_results_html" "$analytics_json" "$analytics_headers" "$notifications_html" "$notification_partial_html" "$notification_write_html" "$notification_badge_html" "$automations_html" "$automation_panel_html"' EXIT
+settings_html="$(mktemp)"
+trap 'rm -f "$cookie_jar" "$signup_html" "$app_html" "$check_email_html" "$members_html" "$billing_html" "$profile_html" "$card_html" "$partial_html" "$history_restore_html" "$invitation_html" "$member_cookie_jar" "$member_signup_html" "$attachment_payload" "$attachment_download" "$avatar_payload" "$avatar_before" "$avatar_after" "$boards_html" "$my_work_html" "$analytics_html" "$analytics_results_html" "$analytics_json" "$analytics_headers" "$notifications_html" "$notification_partial_html" "$notification_write_html" "$notification_badge_html" "$automations_html" "$automation_panel_html" "$settings_html"' EXIT
 
 assert_analytics_open_cards() {
   node -e '
@@ -131,6 +132,99 @@ if sed -n '/<header class="workspace-header">/,/<\/header>/p' "$app_html" | grep
 fi
 
 curl --fail --silent --show-error --cookie "$cookie_jar" \
+  "$base_url/app/settings" > "$settings_html"
+grep --quiet '<!doctype html>' "$settings_html"
+grep --quiet 'class="workspace-sidebar"' "$settings_html"
+grep --quiet 'data-workspace-page="settings"' "$settings_html"
+grep --quiet 'href="/app/settings" class="active" aria-current="page"' "$settings_html"
+grep --quiet 'General settings' "$settings_html"
+grep --quiet 'Security and permissions' "$settings_html"
+grep --quiet 'Transfer workspace ownership' "$settings_html"
+settings_csrf_token="$(
+  sed -n '/action="\/app\/settings\/general"/,/<\/form>/ s/.*name="csrfToken" value="\([^"]*\)".*/\1/p' \
+    "$settings_html" | head -1
+)"
+initial_workspace_slug="$(
+  sed -n 's/.*name="slug" value="\([^"]*\)".*/\1/p' "$settings_html" | head -1
+)"
+settings_test_slug="ci-settings-$(
+  printf '%s' "$run_id" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-' | cut -c1-75
+)"
+test -n "$settings_csrf_token"
+test -n "$initial_workspace_slug"
+
+invalid_general_result="$(
+  curl --silent --show-error --output /dev/null --write-out '%{http_code}|%{redirect_url}' \
+    --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+    --request POST "$base_url/app/settings/general" \
+    --data-urlencode "csrfToken=invalid" \
+    --data-urlencode "name=Invalid CSRF Workspace" \
+    --data-urlencode "slug=$settings_test_slug" \
+    --data-urlencode "timezone=America/Sao_Paulo" \
+    --data-urlencode "defaultLocale=pt_BR"
+)"
+if [[ "$invalid_general_result" != 302*"error=expired" ]]; then
+  echo "Invalid Settings CSRF returned an unexpected result: $invalid_general_result" >&2
+  exit 1
+fi
+
+general_update_status="$(
+  curl --fail --silent --show-error --location --output "$settings_html" \
+    --write-out '%{http_code}' \
+    --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+    --header "HX-Request: true" --header "HX-Target: workspace-main" \
+    --data-urlencode "csrfToken=$settings_csrf_token" \
+    --data-urlencode "name=CI Workspace Settings" \
+    --data-urlencode "slug=$settings_test_slug" \
+    --data-urlencode "timezone=America/Sao_Paulo" \
+    --data-urlencode "defaultLocale=PT_BR" \
+    "$base_url/app/settings/general"
+)"
+if [[ "$general_update_status" != "200" ]]; then
+  echo "General Settings HTMX update returned HTTP $general_update_status" >&2
+  exit 1
+fi
+grep --quiet 'id="workspace-main"' "$settings_html"
+grep --quiet 'data-workspace-name="CI&#x20;Workspace&#x20;Settings"' "$settings_html"
+if ! grep 'name="timezone"' "$settings_html" | grep --quiet 'America'; then
+  echo "Updated Settings response did not retain the selected time zone" >&2
+  grep 'name="timezone"' "$settings_html" >&2 || true
+  exit 1
+fi
+grep 'option value="pt_BR"' "$settings_html" | grep --quiet 'selected'
+grep --quiet 'General workspace settings were updated' "$settings_html"
+if grep --quiet '<!doctype html>' "$settings_html"; then
+  echo "Settings HTMX update unexpectedly returned the workspace shell" >&2
+  exit 1
+fi
+
+settings_csrf_token="$(
+  sed -n '/action="\/app\/settings\/general"/,/<\/form>/ s/.*name="csrfToken" value="\([^"]*\)".*/\1/p' \
+    "$settings_html" | head -1
+)"
+test -n "$settings_csrf_token"
+restore_general_result="$(
+  curl --silent --show-error --output /dev/null --write-out '%{http_code}|%{redirect_url}' \
+    --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+    --request POST "$base_url/app/settings/general" \
+    --data-urlencode "csrfToken=$settings_csrf_token" \
+    --data-urlencode "name=CI Workspace" \
+    --data-urlencode "slug=$initial_workspace_slug" \
+    --data-urlencode "timezone=UTC" \
+    --data-urlencode "defaultLocale=en_US"
+)"
+if [[ "$restore_general_result" != 302*"notice=general%5Fsaved" ]]; then
+  echo "Restoring General Settings returned an unexpected result: $restore_general_result" >&2
+  exit 1
+fi
+
+curl --fail --silent --show-error --cookie "$cookie_jar" \
+  --header "HX-Request: true" --header "HX-History-Restore-Request: true" \
+  "$base_url/app/settings" > "$history_restore_html"
+grep --quiet '<!doctype html>' "$history_restore_html"
+grep --quiet 'class="workspace-sidebar"' "$history_restore_html"
+
+curl --fail --silent --show-error --cookie "$cookie_jar" \
   "$base_url/app/analytics" > "$analytics_html"
 grep --quiet '<!doctype html>' "$analytics_html"
 grep --quiet 'class="workspace-sidebar"' "$analytics_html"
@@ -172,7 +266,7 @@ grep --quiet 'name="returnTo" value="analytics"' "$card_html"
 grep --quiet 'name="returnFromDate" value="' "$card_html"
 grep --quiet 'name="returnToDate" value="' "$card_html"
 
-for partial_path in app app/my-work app/members app/profile app/billing app/boards/manage app/analytics app/automations app/notifications; do
+for partial_path in app app/my-work app/members app/profile app/billing app/boards/manage app/analytics app/automations app/notifications app/settings; do
   curl --fail --silent --show-error --cookie "$cookie_jar" \
     --header "HX-Request: true" "$base_url/$partial_path" > "$partial_html"
   grep --quiet 'id="workspace-main"' "$partial_html"
@@ -1628,6 +1722,226 @@ if grep --quiet 'class="notification-item is-unread"' "$notification_write_html"
   exit 1
 fi
 
+if command -v docker > /dev/null 2>&1 \
+  && smoke_db_user="$(docker compose exec -T postgres printenv POSTGRES_USER 2> /dev/null | tr -d '\r')" \
+  && smoke_db_name="$(docker compose exec -T postgres printenv POSTGRES_DB 2> /dev/null | tr -d '\r')"; then
+  curl --fail --silent --show-error --location \
+    --cookie "$member_cookie_jar" --cookie-jar "$member_cookie_jar" \
+    "$base_url/locale/en_US" > /dev/null
+  original_owner_id="$(
+    printf '%s\n' \
+      "SELECT id FROM app_user WHERE email=:'owner_email';" \
+      | docker compose exec -T postgres psql \
+        --username "$smoke_db_user" \
+        --dbname "$smoke_db_name" \
+        --set ON_ERROR_STOP=1 \
+        --set owner_email="$test_email" \
+        --quiet --tuples-only --no-align --file=- \
+      | tr -d '\r[:space:]'
+  )"
+  test -n "$original_owner_id"
+  test -n "$member_user_id"
+
+  printf '%s\n' \
+    "UPDATE workspace_member SET role='admin'" \
+    " WHERE user_id=CAST(:'member_user_id' AS UUID)" \
+    "   AND workspace_id=(SELECT last_workspace_id FROM app_user WHERE email=:'owner_email');" \
+    | docker compose exec -T postgres psql \
+      --username "$smoke_db_user" \
+      --dbname "$smoke_db_name" \
+      --set ON_ERROR_STOP=1 \
+      --set member_user_id="$member_user_id" \
+      --set owner_email="$test_email" \
+      --file=- > /dev/null
+
+  curl --fail --silent --show-error --cookie "$member_cookie_jar" \
+    "$base_url/app/members" > "$members_html"
+  admin_invite_csrf="$(
+    sed -n '/action="\/app\/members\/invite"/,/<\/form>/ s/.*name="csrfToken" value="\([^"]*\)".*/\1/p' \
+      "$members_html" | head -1
+  )"
+  test -n "$admin_invite_csrf"
+  curl --fail --silent --show-error --cookie "$member_cookie_jar" \
+    "$base_url/app/boards/manage" > "$boards_html"
+  admin_board_csrf="$(
+    sed -n '/action="\/app\/boards"/,/<\/form>/ s/.*name="csrfToken" value="\([^"]*\)".*/\1/p' \
+      "$boards_html" | head -1
+  )"
+  test -n "$admin_board_csrf"
+
+  curl --fail --silent --show-error --cookie "$cookie_jar" \
+    "$base_url/app/settings" > "$settings_html"
+  security_csrf="$(
+    sed -n '/action="\/app\/settings\/security"/,/<\/form>/ s/.*name="csrfToken" value="\([^"]*\)".*/\1/p' \
+      "$settings_html" | head -1
+  )"
+  ownership_csrf="$(
+    sed -n '/action="\/app\/settings\/ownership"/,/<\/form>/ s/.*name="csrfToken" value="\([^"]*\)".*/\1/p' \
+      "$settings_html" | head -1
+  )"
+  test -n "$security_csrf"
+  test -n "$ownership_csrf"
+  grep --quiet "option value=\"$member_user_id\"" "$settings_html"
+
+  security_update_result="$(
+    curl --silent --show-error --output /dev/null --write-out '%{http_code}|%{redirect_url}' \
+      --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+      --request POST "$base_url/app/settings/security" \
+      --data-urlencode "csrfToken=$security_csrf" \
+      --data-urlencode "invitationPolicy=owner_only" \
+      --data-urlencode "boardCreationPolicy=owner_only"
+  )"
+  if [[ "$security_update_result" != 302*"notice=security%5Fsaved" ]]; then
+    echo "Security Settings update returned an unexpected result: $security_update_result" >&2
+    exit 1
+  fi
+
+  curl --fail --silent --show-error --cookie "$member_cookie_jar" \
+    "$base_url/app/members" > "$members_html"
+  if grep --quiet 'action="/app/members/invite"' "$members_html"; then
+    echo "Restricted administrator unexpectedly retained the invitation form" >&2
+    exit 1
+  fi
+  blocked_invite_result="$(
+    curl --silent --show-error --output /dev/null --write-out '%{http_code}|%{redirect_url}' \
+      --cookie "$member_cookie_jar" --cookie-jar "$member_cookie_jar" \
+      --request POST "$base_url/app/members/invite" \
+      --data-urlencode "csrfToken=$admin_invite_csrf" \
+      --data-urlencode "inviteeName=Blocked Invite" \
+      --data-urlencode "email=blocked-${run_id}@example.test" \
+      --data-urlencode "role=member"
+  )"
+  if [[ "$blocked_invite_result" != 302*"error=forbidden" ]]; then
+    echo "Restricted administrator invitation returned an unexpected result: $blocked_invite_result" >&2
+    exit 1
+  fi
+
+  curl --fail --silent --show-error --cookie "$member_cookie_jar" \
+    "$base_url/app/boards/manage" > "$boards_html"
+  grep --quiet 'Workspace security settings currently allow only the owner to create boards' "$boards_html"
+  blocked_board_result="$(
+    curl --silent --show-error --output /dev/null --write-out '%{http_code}|%{redirect_url}' \
+      --cookie "$member_cookie_jar" --cookie-jar "$member_cookie_jar" \
+      --request POST "$base_url/app/boards" \
+      --data-urlencode "csrfToken=$admin_board_csrf" \
+      --data-urlencode "name=Blocked Administrator Board" \
+      --data-urlencode "template=blank"
+  )"
+  if [[ "$blocked_board_result" != 302*"error=forbidden" ]]; then
+    echo "Restricted administrator board creation returned an unexpected result: $blocked_board_result" >&2
+    exit 1
+  fi
+
+  first_transfer_result="$(
+    curl --silent --show-error --output /dev/null --write-out '%{http_code}|%{redirect_url}' \
+      --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+      --request POST "$base_url/app/settings/ownership" \
+      --data-urlencode "csrfToken=$ownership_csrf" \
+      --data-urlencode "targetUserId=$member_user_id" \
+      --data-urlencode "currentPassword=CI-updated-password-2026"
+  )"
+  if [[ "$first_transfer_result" != 302*"notice=ownership%5Ftransferred" ]]; then
+    echo "First ownership transfer returned an unexpected result: $first_transfer_result" >&2
+    exit 1
+  fi
+
+  wait_for_notification_center \
+    "$member_cookie_jar" \
+    "/app/notifications?filter=unread&page=1" \
+    "$notifications_html" \
+    "icon-workspace_ownership_transferred"
+  grep --quiet 'transferred workspace ownership to you' "$notifications_html"
+  grep --quiet 'View settings' "$notifications_html"
+  ownership_notification_csrf="$(
+    sed -n '/action="\/app\/notifications\/read-all"/,/<\/form>/p' \
+      "$notifications_html" \
+      | sed -n 's/.*name="csrfToken" value="\([^"]*\)".*/\1/p' \
+      | head -1
+  )"
+  test -n "$ownership_notification_csrf"
+  curl --fail --silent --show-error --output /dev/null \
+    --cookie "$member_cookie_jar" --cookie-jar "$member_cookie_jar" \
+    --request POST "$base_url/app/notifications/read-all" \
+    --data-urlencode "csrfToken=$ownership_notification_csrf" \
+    --data-urlencode "filter=unread"
+
+  curl --fail --silent --show-error --cookie "$cookie_jar" \
+    "$base_url/app/settings" > "$settings_html"
+  grep --quiet 'data-workspace-role="admin"' "$settings_html"
+  if grep --quiet 'action="/app/settings/security"' "$settings_html"; then
+    echo "Former owner unexpectedly retained workspace security controls" >&2
+    exit 1
+  fi
+  curl --fail --silent --show-error --cookie "$member_cookie_jar" \
+    "$base_url/app/settings" > "$settings_html"
+  grep --quiet 'data-workspace-role="owner"' "$settings_html"
+  grep --quiet 'action="/app/settings/security"' "$settings_html"
+  grep --quiet "option value=\"$original_owner_id\"" "$settings_html"
+  member_ownership_csrf="$(
+    sed -n '/action="\/app\/settings\/ownership"/,/<\/form>/ s/.*name="csrfToken" value="\([^"]*\)".*/\1/p' \
+      "$settings_html" | head -1
+  )"
+  test -n "$member_ownership_csrf"
+
+  second_transfer_result="$(
+    curl --silent --show-error --output /dev/null --write-out '%{http_code}|%{redirect_url}' \
+      --cookie "$member_cookie_jar" --cookie-jar "$member_cookie_jar" \
+      --request POST "$base_url/app/settings/ownership" \
+      --data-urlencode "csrfToken=$member_ownership_csrf" \
+      --data-urlencode "targetUserId=$original_owner_id" \
+      --data-urlencode "currentPassword=CI-member-password-2026"
+  )"
+  if [[ "$second_transfer_result" != 302*"notice=ownership%5Ftransferred" ]]; then
+    echo "Returning workspace ownership returned an unexpected result: $second_transfer_result" >&2
+    exit 1
+  fi
+
+  ownership_state="$(
+    printf '%s\n' \
+      "SELECT COUNT(*) FILTER (WHERE membership.role='owner')," \
+      "       MAX(membership.role) FILTER (WHERE membership.user_id=CAST(:'owner_user_id' AS UUID))," \
+      "       MAX(membership.role) FILTER (WHERE membership.user_id=CAST(:'member_user_id' AS UUID))" \
+      "FROM workspace_member membership" \
+      "WHERE membership.workspace_id=(SELECT last_workspace_id FROM app_user WHERE email=:'owner_email');" \
+      | docker compose exec -T postgres psql \
+        --username "$smoke_db_user" \
+        --dbname "$smoke_db_name" \
+        --set ON_ERROR_STOP=1 \
+        --set owner_user_id="$original_owner_id" \
+        --set member_user_id="$member_user_id" \
+        --set owner_email="$test_email" \
+        --quiet --tuples-only --no-align --field-separator='|' --file=- \
+      | tr -d '\r[:space:]'
+  )"
+  test "$ownership_state" = "1|owner|admin"
+
+  curl --fail --silent --show-error --cookie "$cookie_jar" \
+    "$base_url/app/settings" > "$settings_html"
+  security_csrf="$(
+    sed -n '/action="\/app\/settings\/security"/,/<\/form>/ s/.*name="csrfToken" value="\([^"]*\)".*/\1/p' \
+      "$settings_html" | head -1
+  )"
+  test -n "$security_csrf"
+  curl --fail --silent --show-error --output /dev/null \
+    --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+    --request POST "$base_url/app/settings/security" \
+    --data-urlencode "csrfToken=$security_csrf" \
+    --data-urlencode "invitationPolicy=owner_admin" \
+    --data-urlencode "boardCreationPolicy=owner_admin"
+
+  printf '%s\n' \
+    "UPDATE workspace_member SET role='member'" \
+    " WHERE user_id=CAST(:'member_user_id' AS UUID)" \
+    "   AND workspace_id=(SELECT last_workspace_id FROM app_user WHERE email=:'owner_email');" \
+    | docker compose exec -T postgres psql \
+      --username "$smoke_db_user" \
+      --dbname "$smoke_db_name" \
+      --set ON_ERROR_STOP=1 \
+      --set member_user_id="$member_user_id" \
+      --set owner_email="$test_email" \
+      --file=- > /dev/null
+fi
+
 curl --fail --silent --show-error --location \
   --cookie "$member_cookie_jar" --cookie-jar "$member_cookie_jar" \
   "$base_url/locale/en_US" > /dev/null
@@ -2265,6 +2579,12 @@ curl --fail --silent --show-error --cookie "$cookie_jar" \
 grep --quiet "Regras de fluxo" "$automations_html"
 grep --quiet "Card entrar em" "$automations_html"
 grep --quiet "Notificar" "$automations_html"
+curl --fail --silent --show-error --cookie "$cookie_jar" \
+  "$base_url/app/settings" > "$settings_html"
+grep --quiet "Governança do workspace" "$settings_html"
+grep --quiet "Configurações gerais" "$settings_html"
+grep --quiet "Segurança e permissões" "$settings_html"
+grep --quiet "Transferir propriedade do workspace" "$settings_html"
 
 if command -v docker > /dev/null 2>&1 \
   && smoke_db_user="$(docker compose exec -T postgres printenv POSTGRES_USER 2> /dev/null | tr -d '\r')" \

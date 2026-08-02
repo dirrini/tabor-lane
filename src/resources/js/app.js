@@ -799,6 +799,7 @@
       notifications: "/app/notifications",
       analytics: "/app/analytics",
       automations: "/app/automations",
+      settings: "/app/settings",
     };
 
     workspaceShell.querySelectorAll(".workspace-sidebar nav a").forEach((link) => {
@@ -813,6 +814,23 @@
     account?.classList.toggle("active", accountActive);
     if (accountActive) account?.setAttribute("aria-current", "page");
     else account?.removeAttribute("aria-current");
+
+    const workspaceName = workspaceMain.dataset.workspaceName?.trim();
+    if (workspaceName) {
+      workspaceShell.querySelectorAll("[data-current-workspace-name]").forEach((element) => {
+        element.textContent = workspaceName;
+      });
+      workspaceShell.querySelectorAll("[data-current-workspace-initial]").forEach((element) => {
+        element.textContent = workspaceName.charAt(0).toUpperCase();
+      });
+    }
+
+    const workspaceRoleLabel = workspaceMain.dataset.workspaceRoleLabel?.trim();
+    if (workspaceRoleLabel) {
+      workspaceShell.querySelectorAll("[data-current-workspace-role]").forEach((element) => {
+        element.textContent = workspaceRoleLabel;
+      });
+    }
 
     document.body.className = `page-${page}`;
   };

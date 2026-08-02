@@ -14,7 +14,9 @@ through workflows with changes persisted in PostgreSQL. Domain changes are
 published through a transactional outbox and delivered to the in-app
 notification center without coupling card writes to external services. Premium
 workspace owners and admins can create lane-entry automations that notify a
-selected member when a card reaches a configured lane.
+selected member when a card reaches a configured lane. Workspace settings let
+privileged users maintain identity and regional defaults, while owner-controlled
+security policies govern invitations, board creation and ownership transfers.
 
 ## Technology
 
@@ -152,6 +154,19 @@ as a soft delete to preserve transition history.
 Free workspaces can keep up to 3 active boards. Premium workspaces have no
 active-board limit.
 
+## Workspace settings
+
+Owners and admins can update the workspace name, unique slug, reporting time
+zone and default language. The time zone is applied to Analytics date boundaries,
+and the default language is used for new board templates and invitation messages.
+
+Only the current owner can decide whether administrators may invite members or
+create boards. Ownership can be transferred to another verified member after
+the current owner's password is confirmed. The transfer is transactional and a
+database constraint prevents more than one owner in the same workspace. The
+previous owner becomes an administrator immediately; subscription management
+remains exclusive to the current owner.
+
 ## Events and notifications
 
 Supported card lifecycle and workspace-membership changes write domain events
@@ -185,8 +200,9 @@ workspace can keep up to 50 rules.
 `ci.yml` validates translations, builds the application, starts the complete
 stack and checks application, PostgreSQL and MinIO health. Its functional smoke
 test also covers account lifecycle, cards, attachments, members, boards, lanes,
-plan limits, archiving, WIP enforcement, lane-entry automations, the
-transactional outbox and the notification center.
+plan limits, archiving, WIP enforcement, workspace settings, security policies,
+ownership transfers, lane-entry automations, the transactional outbox and the
+notification center.
 
 `deploy-oci.yml` builds an immutable `amd64`/`arm64` image, publishes it to
 GHCR and deploys it to an OCI VM. The VM must already contain Docker, a GHCR

@@ -64,13 +64,14 @@
 			card_updated="board",
 			card_created="plus",
 			card_archived="archive",
-			workspace_member_joined="users"
+			workspace_member_joined="users",
+			workspace_ownership_transferred="shield-check"
 		};
 		return structKeyExists( icons, arguments.eventType ) ? icons[ arguments.eventType ] : "bell";
 	};
 
 	notificationEventMessage = function( required struct item, required string eventType ){
-		var supportedEvents = "card_assigned,card_commented,card_mentioned,card_due_soon,card_moved,card_reordered,card_updated,card_created,card_archived,workspace_member_joined";
+		var supportedEvents = "card_assigned,card_commented,card_mentioned,card_due_soon,card_moved,card_reordered,card_updated,card_created,card_archived,workspace_member_joined,workspace_ownership_transferred";
 		var messageKey = listFindNoCase( supportedEvents, arguments.eventType )
 			? "notifications.event.#arguments.eventType#"
 			: "notifications.event.generic";
@@ -94,7 +95,7 @@
 
 	notificationActionUrl = function( required struct item ){
 		var target = trim( arguments.item.targetUrl ?: "" );
-		if ( listFindNoCase( "/app,/app/members,/app/profile", target ) ) return target;
+		if ( listFindNoCase( "/app,/app/members,/app/profile,/app/settings", target ) ) return target;
 		if (
 			reFindNoCase(
 				"^/app/cards/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
@@ -118,6 +119,7 @@
 		if ( arguments.target.findNoCase( "/app/cards/" ) == 1 ) return $r( "notifications.openCard" );
 		if ( arguments.target == "/app/members" ) return $r( "notifications.viewMembers" );
 		if ( arguments.target == "/app/profile" ) return $r( "notifications.viewProfile" );
+		if ( arguments.target == "/app/settings" ) return $r( "notifications.viewSettings" );
 		return $r( "notifications.viewBoards" );
 	};
 

@@ -41,7 +41,7 @@
                 </section>
             </cfif>
 
-            <cfif management.canManage>
+            <cfif management.canCreateByPolicy>
                 <section class="management-panel create-board-panel">
                     <div class="panel-heading"><div><h2>#$r("boards.create")#</h2><p>#$r("boards.createBody")#</p></div></div>
                     <cfif management.canCreateBoard>
@@ -53,6 +53,11 @@
                             <button class="button button-primary button-small" type="submit"><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##plus"></use></svg> #$r("boards.createAction")#</button>
                         </form>
                     <cfelse><div class="plan-limit-message"><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##crown"></use></svg><p>#$r("boards.limitReached")#</p><a href="/app/profile" hx-get="/app/profile" hx-target="##workspace-main" hx-select="##workspace-main" hx-swap="outerHTML" hx-push-url="true">#$r("boards.viewPremium")#</a></div></cfif>
+                </section>
+            <cfelseif management.canManage>
+                <section class="management-panel create-board-panel">
+                    <div class="panel-heading"><div><h2>#$r("boards.create")#</h2><p>#$r("boards.createBody")#</p></div></div>
+                    <div class="plan-limit-message board-policy-message"><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##lock"></use></svg><p>#$r("boards.creationRestricted")#</p></div>
                 </section>
             </cfif>
         </aside>

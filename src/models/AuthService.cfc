@@ -498,10 +498,14 @@ component singleton {
 	){
 		var normalizedEmail = lCase( trim( arguments.email ) );
 		var normalizedName = trim( arguments.displayName );
+		var requestedLocale = trim( arguments.locale );
+		var normalizedLocale = compareNoCase( requestedLocale, "pt_BR" ) == 0
+			? "pt_BR"
+			: ( compareNoCase( requestedLocale, "en_US" ) == 0 ? "en_US" : "" );
 		if (
 			!normalizedName.len()
 			|| !isValid( "email", normalizedEmail )
-			|| !listFindNoCase( "en_US,pt_BR", arguments.locale )
+			|| !normalizedLocale.len()
 		) {
 			return { success = false, code = "invalid" };
 		}
@@ -526,7 +530,7 @@ component singleton {
 			{
 				displayName = normalizedName,
 				email = normalizedEmail,
-				locale = arguments.locale,
+				locale = normalizedLocale,
 				emailChanged = emailChanged,
 				userId = arguments.userId
 			}
@@ -538,7 +542,7 @@ component singleton {
 				id = arguments.userId,
 				email = normalizedEmail,
 				displayName = normalizedName,
-				locale = arguments.locale,
+				locale = normalizedLocale,
 				emailVerified = !emailChanged
 			},
 			verificationToken = emailChanged
@@ -602,9 +606,14 @@ component singleton {
 			: [ "Ideas", "To do", "In progress", "Done" ];
 
 		queryExecute(
-			"INSERT INTO workspace (id, name, slug, plan)
-			 VALUES (CAST(:id AS UUID), :name, :slug, 'free')",
-			{ id = arguments.workspaceId, name = trim( arguments.workspaceName ), slug = workspaceSlug }
+			"INSERT INTO workspace (id, name, slug, plan, default_locale)
+			 VALUES (CAST(:id AS UUID), :name, :slug, 'free', :defaultLocale)",
+			{
+				id = arguments.workspaceId,
+				name = trim( arguments.workspaceName ),
+				slug = workspaceSlug,
+				defaultLocale = arguments.locale
+			}
 		);
 		queryExecute(
 			"INSERT INTO workspace_member (workspace_id, user_id, role)

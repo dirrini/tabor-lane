@@ -85,7 +85,7 @@ component singleton {
 		}
 
 		var accessRows = queryExecute(
-			"SELECT membership.role,workspace.plan
+			"SELECT membership.role,workspace.plan,workspace.timezone
 			 FROM workspace_member membership
 			 JOIN workspace ON workspace.id=membership.workspace_id
 			 WHERE membership.user_id=CAST(:userId AS UUID)
@@ -101,8 +101,9 @@ component singleton {
 		var access = {};
 		access[ "role" ] = accessRows[ 1 ].role;
 		access[ "plan" ] = accessRows[ 1 ].plan;
+		access[ "timezone" ] = accessRows[ 1 ].timezone;
 		access[ "canViewHiddenLanes" ] = listFindNoCase( "owner,admin", accessRows[ 1 ].role ) > 0;
-		var normalized = normalizeFilters( arguments.filters );
+		var normalized = normalizeFilters( arguments.filters, access.timezone );
 		if ( !normalized.success ) return failure( normalized.code );
 
 		if ( normalized.boardId.len() ) {
@@ -140,7 +141,8 @@ component singleton {
 			canViewHidden=access.canViewHiddenLanes,
 			fromDate=normalized.from,
 			toDate=normalized.to,
-			utcToday=normalized.utcToday
+			localToday=normalized.localToday,
+			timezone=access.timezone
 		};
 		var historicalPredicates = [
 			"c.workspace_id=CAST(:workspaceId AS UUID)",
@@ -185,19 +187,19 @@ component singleton {
 			 period_completed AS (
 			     SELECT *
 			     FROM historical_scope
-			     WHERE completed_at>=CAST(:fromDate AS DATE)
-			       AND completed_at<CAST(:toDate AS DATE)+INTERVAL '1 day'
+			     WHERE completed_at>=(CAST(CAST(:fromDate AS DATE) AS TIMESTAMP) AT TIME ZONE :timezone)
+			       AND completed_at<(CAST(CAST(:toDate AS DATE)+1 AS TIMESTAMP) AT TIME ZONE :timezone)
 			 )
 			 SELECT
 			     (SELECT COUNT(*) FROM current_scope) AS open_cards,
 			     (SELECT COUNT(*) FROM current_scope WHERE started_at IS NOT NULL) AS current_wip,
 			     (SELECT COUNT(*) FROM current_scope
 			       WHERE due_at IS NOT NULL
-			         AND CAST(due_at AT TIME ZONE 'UTC' AS DATE)<CAST(:utcToday AS DATE)) AS overdue,
+			         AND CAST(due_at AT TIME ZONE 'UTC' AS DATE)<CAST(:localToday AS DATE)) AS overdue,
 			     (SELECT COUNT(*) FROM current_scope
 			       WHERE due_at IS NOT NULL
-			         AND CAST(due_at AT TIME ZONE 'UTC' AS DATE)>=CAST(:utcToday AS DATE)
-			         AND CAST(due_at AT TIME ZONE 'UTC' AS DATE)<=CAST(:utcToday AS DATE)+6) AS due_next_7_days,
+			         AND CAST(due_at AT TIME ZONE 'UTC' AS DATE)>=CAST(:localToday AS DATE)
+			         AND CAST(due_at AT TIME ZONE 'UTC' AS DATE)<=CAST(:localToday AS DATE)+6) AS due_next_7_days,
 			     COUNT(*) AS throughput,
 			     COUNT(*) FILTER (WHERE completed_at>=created_at) AS lead_sample_size,
 			     AVG(EXTRACT(EPOCH FROM completed_at-created_at))
@@ -234,16 +236,19 @@ component singleton {
 		)[ 1 ];
 
 		var throughputRows = queryExecute(
-			"SELECT to_char(CAST(c.completed_at AT TIME ZONE 'UTC' AS DATE),'YYYY-MM-DD') AS bucket_date,
+			"SELECT to_char(completed.bucket_date,'YYYY-MM-DD') AS bucket_date,
 			        COUNT(*) AS completed_count
-			 FROM card c
-			 JOIN board b ON b.id=c.board_id AND b.workspace_id=c.workspace_id
-			 JOIN board_column bc ON bc.id=c.column_id AND bc.board_id=c.board_id
-			 WHERE #arrayToList( historicalPredicates, ' AND ' )#
-			   AND c.completed_at>=CAST(:fromDate AS DATE)
-			   AND c.completed_at<CAST(:toDate AS DATE)+INTERVAL '1 day'
-			 GROUP BY CAST(c.completed_at AT TIME ZONE 'UTC' AS DATE)
-			 ORDER BY CAST(c.completed_at AT TIME ZONE 'UTC' AS DATE)",
+			 FROM (
+			     SELECT CAST(c.completed_at AT TIME ZONE :timezone AS DATE) AS bucket_date
+			     FROM card c
+			     JOIN board b ON b.id=c.board_id AND b.workspace_id=c.workspace_id
+			     JOIN board_column bc ON bc.id=c.column_id AND bc.board_id=c.board_id
+			     WHERE #arrayToList( historicalPredicates, ' AND ' )#
+			       AND c.completed_at>=(CAST(CAST(:fromDate AS DATE) AS TIMESTAMP) AT TIME ZONE :timezone)
+			       AND c.completed_at<(CAST(CAST(:toDate AS DATE)+1 AS TIMESTAMP) AT TIME ZONE :timezone)
+			 ) completed
+			 GROUP BY completed.bucket_date
+			 ORDER BY completed.bucket_date",
 			params,
 			{ returntype="array" }
 		);
@@ -439,7 +444,7 @@ component singleton {
 			"yyyy-mm-dd"
 		);
 		responsePeriod[ "days" ] = inclusiveDays;
-		responsePeriod[ "timezone" ] = "UTC";
+		responsePeriod[ "timezone" ] = access.timezone;
 
 		var leadTime = {};
 		leadTime[ "sampleSize" ] = integerOrZero( summaryRow.lead_sample_size );
@@ -491,7 +496,7 @@ component singleton {
 		return dashboard;
 	}
 
-	private struct function normalizeFilters( required struct filters ){
+	private struct function normalizeFilters( required struct filters, required string timezone ){
 		var normalized = {
 			success=true,
 			code="ok",
@@ -505,11 +510,11 @@ component singleton {
 			return { success=false,code="invalid_filter" };
 		}
 
-		var utcToday = createObject( "java", "java.time.LocalDate" )
-			.now( createObject( "java", "java.time.ZoneId" ).of( "UTC" ) )
+		var localToday = createObject( "java", "java.time.LocalDate" )
+			.now( createObject( "java", "java.time.ZoneId" ).of( arguments.timezone ) )
 			.toString();
-		var parsedUtcToday = parseIsoDate( utcToday );
-		var today = parsedUtcToday.value;
+		var parsedLocalToday = parseIsoDate( localToday );
+		var today = parsedLocalToday.value;
 		var rawTo = trim( arguments.filters.toDate ?: ( arguments.filters.to ?: "" ) );
 		var parsedTo = rawTo.len() ? parseIsoDate( rawTo ) : { success=true,value=today };
 		if ( !parsedTo.success ) return { success=false,code="invalid_period" };
@@ -527,7 +532,7 @@ component singleton {
 		normalized.toDate = parsedTo.value;
 		normalized.from = dateFormat( parsedFrom.value, "yyyy-mm-dd" );
 		normalized.to = dateFormat( parsedTo.value, "yyyy-mm-dd" );
-		normalized.utcToday = utcToday;
+		normalized.localToday = localToday;
 		return normalized;
 	}
 

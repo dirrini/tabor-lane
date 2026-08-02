@@ -8,6 +8,7 @@ component singleton {
         var access = workspaceAccess( arguments.userId, arguments.workspaceId );
         if ( !access.found ) return { found=false };
         var canManageBoards = listFindNoCase( "owner,admin", access.role ) > 0;
+        var canCreateByPolicy = canCreateBoards( access );
 
         var boards = queryExecute(
             "SELECT CAST(b.id AS TEXT) id,b.name,b.description,b.is_archived,b.created_at,b.position,
@@ -57,7 +58,9 @@ component singleton {
             role=access.role,
             plan=access.plan,
             canManage=canManageBoards,
-            canCreateBoard=maxBoards==0 || activeCount<maxBoards,
+            canCreateByPolicy=canCreateByPolicy,
+            canCreateBoard=canCreateByPolicy && ( maxBoards==0 || activeCount<maxBoards ),
+            boardLimitReached=maxBoards>0 && activeCount>=maxBoards,
             maxBoards=maxBoards,
             activeBoards=activeBoards,
             archivedBoards=archivedBoards,
@@ -71,36 +74,61 @@ component singleton {
         required string workspaceId,
         required string name,
         string description = "",
-        string template = "blank",
-        string locale = "en_US"
+        string template = "blank"
     ){
-        var access=workspaceAccess(arguments.userId,arguments.workspaceId);
-        if(!canManage(access)) return {success=false,code="forbidden"};
         var cleanName=trim(arguments.name);
         if(!cleanName.len() || cleanName.len()>160) return {success=false,code="invalid"};
-        var activeCount=queryExecute(
-            "SELECT COUNT(*) total FROM board WHERE workspace_id=CAST(:workspace AS UUID) AND is_archived=false",
-            {workspace=arguments.workspaceId},{returntype="array"}
-        )[1].total;
-        if(access.plan!="premium" && activeCount>=3) return {success=false,code="board_limit"};
-
         var boardId=canonicalUuid(createUUID());
-        var laneNames=templateLanes(arguments.template,arguments.locale);
+        var outcome={success=false,code="forbidden"};
         transaction {
-            queryExecute(
-                "INSERT INTO board(id,workspace_id,name,description,position)
-                 VALUES(CAST(:id AS UUID),CAST(:workspace AS UUID),:name,:description,
-                        (SELECT COALESCE(MAX(position),0)+1 FROM board WHERE workspace_id=CAST(:workspace AS UUID)))",
-                {id=boardId,workspace=arguments.workspaceId,name=cleanName,description=left(trim(arguments.description),2000)}
+            var accessRows=queryExecute(
+                "SELECT wm.role,w.plan,w.default_locale,w.board_creation_policy
+                 FROM workspace w
+                 JOIN workspace_member wm
+                   ON wm.workspace_id=w.id
+                  AND wm.user_id=CAST(:user AS UUID)
+                 WHERE w.id=CAST(:workspace AS UUID)
+				 FOR UPDATE OF w,wm",
+                {user=arguments.userId,workspace=arguments.workspaceId},
+                {returntype="array"}
             );
-            for(var i=1;i<=laneNames.len();i++){
-                queryExecute(
-                    "INSERT INTO board_column(board_id,name,position,color) VALUES(CAST(:board AS UUID),:name,CAST(:position AS NUMERIC),:color)",
-                    {board=boardId,name=laneNames[i],position=i,color=laneColor(i)}
-                );
+            var access=accessRows.len()?{
+                found=true,role=accessRows[1].role,plan=accessRows[1].plan,
+                default_locale=accessRows[1].default_locale,
+                board_creation_policy=accessRows[1].board_creation_policy
+            }:{found=false};
+            if(canCreateBoards(access)){
+                var activeCount=queryExecute(
+                    "SELECT COUNT(*) total FROM board
+                     WHERE workspace_id=CAST(:workspace AS UUID) AND is_archived=false",
+                    {workspace=arguments.workspaceId},{returntype="array"}
+                )[1].total;
+                if(access.plan!="premium" && activeCount>=3){
+                    outcome={success=false,code="board_limit"};
+                } else {
+                    var laneNames=templateLanes(arguments.template,access.default_locale);
+                    queryExecute(
+                        "INSERT INTO board(id,workspace_id,name,description,position)
+                         VALUES(CAST(:id AS UUID),CAST(:workspace AS UUID),:name,:description,
+                                (SELECT COALESCE(MAX(position),0)+1 FROM board
+                                 WHERE workspace_id=CAST(:workspace AS UUID)))",
+                        {
+                            id=boardId,workspace=arguments.workspaceId,name=cleanName,
+                            description=left(trim(arguments.description),2000)
+                        }
+                    );
+                    for(var i=1;i<=laneNames.len();i++){
+                        queryExecute(
+                            "INSERT INTO board_column(board_id,name,position,color)
+                             VALUES(CAST(:board AS UUID),:name,CAST(:position AS NUMERIC),:color)",
+                            {board=boardId,name=laneNames[i],position=i,color=laneColor(i)}
+                        );
+                    }
+                    outcome={success=true,boardId=boardId};
+                }
             }
         }
-        return {success=true,boardId=boardId};
+        return outcome;
     }
 
     struct function updateBoard(
@@ -301,11 +329,16 @@ component singleton {
 
     private struct function workspaceAccess(required string userId,required string workspaceId){
         var rows=queryExecute(
-            "SELECT wm.role,w.plan FROM workspace_member wm JOIN workspace w ON w.id=wm.workspace_id
+            "SELECT wm.role,w.plan,w.default_locale,w.board_creation_policy
+             FROM workspace_member wm JOIN workspace w ON w.id=wm.workspace_id
              WHERE wm.user_id=CAST(:user AS UUID) AND wm.workspace_id=CAST(:workspace AS UUID)",
             {user=arguments.userId,workspace=arguments.workspaceId},{returntype="array"}
         );
-        return rows.len()?{found=true,role=rows[1].role,plan=rows[1].plan}:{found=false};
+        return rows.len()?{
+            found=true,role=rows[1].role,plan=rows[1].plan,
+            default_locale=rows[1].default_locale,
+            board_creation_policy=rows[1].board_creation_policy
+        }:{found=false};
     }
 
     private struct function boardAccess(required string userId,required string workspaceId,required string boardId){
@@ -334,6 +367,15 @@ component singleton {
     private boolean function canManage(required struct access){
         if(!(arguments.access.found ?: false)) return false;
         return listFindNoCase("owner,admin",arguments.access.role)>0;
+    }
+
+    private boolean function canCreateBoards(required struct access){
+        if(!(arguments.access.found ?: false)) return false;
+        return arguments.access.role=="owner"
+            || (
+                arguments.access.role=="admin"
+                && arguments.access.board_creation_policy=="owner_admin"
+            );
     }
 
     private struct function validateLane(required string name,required string color,required string wipLimit){

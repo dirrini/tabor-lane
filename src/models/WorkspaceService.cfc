@@ -83,16 +83,31 @@ component singleton {
 		);
 	}
 
+	boolean function canInviteMembers( required string userId, required string workspaceId ){
+		var rows = queryExecute(
+			"SELECT membership.role,workspace_record.invitation_policy
+			 FROM workspace_member membership
+			 JOIN workspace workspace_record ON workspace_record.id=membership.workspace_id
+			 WHERE membership.user_id=CAST(:userId AS UUID)
+			   AND membership.workspace_id=CAST(:workspaceId AS UUID)",
+			{ userId=arguments.userId,workspaceId=arguments.workspaceId },
+			{ returntype="array" }
+		);
+		if ( !rows.len() ) return false;
+		return rows[ 1 ].role == "owner"
+			|| ( rows[ 1 ].role == "admin" && rows[ 1 ].invitation_policy == "owner_admin" );
+	}
+
 	struct function createInvitation(
 		required string userId,
 		required string workspaceId,
 		required string inviteeName,
 		required string email,
-		string role = "member",
-		string locale = "en_US"
+		string role = "member"
 	){
 		var access = queryExecute(
-			"SELECT w.name AS workspace_name, u.display_name AS inviter_name, wm.role
+			"SELECT w.name AS workspace_name,w.default_locale,u.display_name AS inviter_name,
+			        wm.role,w.invitation_policy
 			 FROM workspace_member wm
 			 JOIN workspace w ON w.id = wm.workspace_id
 			 JOIN app_user u ON u.id = wm.user_id
@@ -101,7 +116,16 @@ component singleton {
 			{ userId = arguments.userId, workspaceId = arguments.workspaceId },
 			{ returntype = "array" }
 		);
-		if ( !access.len() || !listFindNoCase( "owner,admin", access[ 1 ].role ) ) {
+		if (
+			!access.len()
+			|| !(
+				access[ 1 ].role == "owner"
+				|| (
+					access[ 1 ].role == "admin"
+					&& access[ 1 ].invitation_policy == "owner_admin"
+				)
+			)
+		) {
 			return { success = false, code = "forbidden" };
 		}
 		if ( !listFindNoCase( "admin,member,viewer", arguments.role ) ) {
@@ -125,34 +149,62 @@ component singleton {
 		}
 
 		var token = tokenService.generateToken();
+		var invitationCreated = false;
 		transaction {
-			queryExecute(
-				"DELETE FROM workspace_invitation
-				 WHERE workspace_id = CAST(:workspaceId AS UUID)
-				   AND lower(email) = :email
-				   AND accepted_at IS NULL",
-				{ workspaceId = arguments.workspaceId, email = normalizedEmail }
+			var currentAccess = queryExecute(
+				"SELECT w.name AS workspace_name,w.default_locale,u.display_name AS inviter_name,
+				        wm.role,w.invitation_policy
+				 FROM workspace w
+				 JOIN workspace_member wm
+				   ON wm.workspace_id=w.id
+				  AND wm.user_id=CAST(:userId AS UUID)
+				 JOIN app_user u ON u.id=wm.user_id
+				 WHERE w.id=CAST(:workspaceId AS UUID)
+				 FOR UPDATE OF w,wm",
+				{ userId=arguments.userId,workspaceId=arguments.workspaceId },
+				{ returntype="array" }
 			);
-			queryExecute(
-				"INSERT INTO workspace_invitation
-				    (workspace_id, invitee_name, email, role, token_hash, invited_by, expires_at)
-				 VALUES
-				    (CAST(:workspaceId AS UUID), :inviteeName, :email, :role, :tokenHash,
-				     CAST(:userId AS UUID), :expiresAt)",
-				{
-					workspaceId = arguments.workspaceId,
-					inviteeName = normalizedName,
-					email = normalizedEmail,
-					role = arguments.role,
-					tokenHash = tokenService.hashToken( token ),
-					userId = arguments.userId,
-					expiresAt = {
-						value = dateAdd( "d", 7, now() ),
-						sqltype = "timestamp"
+			if (
+				currentAccess.len()
+				&& (
+					currentAccess[ 1 ].role == "owner"
+					|| (
+						currentAccess[ 1 ].role == "admin"
+						&& currentAccess[ 1 ].invitation_policy == "owner_admin"
+					)
+				)
+			) {
+				access = currentAccess;
+				queryExecute(
+					"DELETE FROM workspace_invitation
+					 WHERE workspace_id = CAST(:workspaceId AS UUID)
+					   AND lower(email) = :email
+					   AND accepted_at IS NULL",
+					{ workspaceId = arguments.workspaceId, email = normalizedEmail }
+				);
+				queryExecute(
+					"INSERT INTO workspace_invitation
+					    (workspace_id, invitee_name, email, role, token_hash, invited_by, expires_at)
+					 VALUES
+					    (CAST(:workspaceId AS UUID), :inviteeName, :email, :role, :tokenHash,
+					     CAST(:userId AS UUID), :expiresAt)",
+					{
+						workspaceId = arguments.workspaceId,
+						inviteeName = normalizedName,
+						email = normalizedEmail,
+						role = arguments.role,
+						tokenHash = tokenService.hashToken( token ),
+						userId = arguments.userId,
+						expiresAt = {
+							value = dateAdd( "d", 7, now() ),
+							sqltype = "timestamp"
+						}
 					}
-				}
-			);
+				);
+				invitationCreated = true;
+			}
 		}
+		if ( !invitationCreated ) return { success=false,code="forbidden" };
 		return {
 			success = true,
 			token = token,
@@ -161,7 +213,7 @@ component singleton {
 			role = arguments.role,
 			workspaceName = access[ 1 ].workspace_name,
 			inviterName = access[ 1 ].inviter_name,
-			locale = arguments.locale
+			locale = access[ 1 ].default_locale
 		};
 	}
 

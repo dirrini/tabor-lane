@@ -2,6 +2,7 @@
 	analytics = prc.analytics ?: {};
 	analyticsSummary = analytics.summary ?: {};
 	analyticsPeriod = analytics.period ?: {};
+	analyticsTimezone = analyticsPeriod.timezone ?: "UTC";
 	throughputTrend = analytics.throughputTrend ?: [];
 	cardsByLane = analytics.cardsByLane ?: [];
 	agingCards = analytics.agingCards ?: [];
@@ -136,7 +137,7 @@
 					<h2 id="analytics-current-title">#$r( "analytics.current.title" )#</h2>
 					<p>#$r( "analytics.current.body" )#</p>
 				</div>
-				<span class="analytics-period-chip"><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##clock"></use></svg> UTC</span>
+				<span class="analytics-period-chip"><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##clock"></use></svg> #encodeForHTML( analyticsTimezone )#</span>
 			</header>
 
 			<div class="analytics-kpis">

@@ -27,6 +27,10 @@ component {
         post( "/app/automations/:ruleId/toggle" ).to( "Automations.toggle" );
         post( "/app/automations" ).to( "Automations.create" );
         get( "/app/automations" ).to( "Automations.index" );
+        post( "/app/settings/ownership" ).to( "Settings.transferOwnership" );
+        post( "/app/settings/security" ).to( "Settings.updateSecurity" );
+        post( "/app/settings/general" ).to( "Settings.updateGeneral" );
+        get( "/app/settings" ).to( "Settings.index" );
         post( "/app/my-work/cards/:cardId" ).to( "MyWork.updateCard" );
         get( "/app/my-work" ).to( "MyWork.index" );
         post( "/app/members/invite" ).to( "App.inviteMember" );

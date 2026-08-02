@@ -27,6 +27,7 @@ analytics_html="$(mktemp)"
 analytics_results_html="$(mktemp)"
 analytics_json="$(mktemp)"
 analytics_headers="$(mktemp)"
+board_revision_headers="$(mktemp)"
 notifications_html="$(mktemp)"
 notification_partial_html="$(mktemp)"
 notification_write_html="$(mktemp)"
@@ -34,7 +35,7 @@ notification_badge_html="$(mktemp)"
 automations_html="$(mktemp)"
 automation_panel_html="$(mktemp)"
 settings_html="$(mktemp)"
-trap 'rm -f "$cookie_jar" "$signup_html" "$app_html" "$check_email_html" "$members_html" "$billing_html" "$profile_html" "$card_html" "$partial_html" "$history_restore_html" "$invitation_html" "$member_cookie_jar" "$member_signup_html" "$attachment_payload" "$attachment_download" "$avatar_payload" "$avatar_before" "$avatar_after" "$boards_html" "$my_work_html" "$analytics_html" "$analytics_results_html" "$analytics_json" "$analytics_headers" "$notifications_html" "$notification_partial_html" "$notification_write_html" "$notification_badge_html" "$automations_html" "$automation_panel_html" "$settings_html"' EXIT
+trap 'rm -f "$cookie_jar" "$signup_html" "$app_html" "$check_email_html" "$members_html" "$billing_html" "$profile_html" "$card_html" "$partial_html" "$history_restore_html" "$invitation_html" "$member_cookie_jar" "$member_signup_html" "$attachment_payload" "$attachment_download" "$avatar_payload" "$avatar_before" "$avatar_after" "$boards_html" "$my_work_html" "$analytics_html" "$analytics_results_html" "$analytics_json" "$analytics_headers" "$board_revision_headers" "$notifications_html" "$notification_partial_html" "$notification_write_html" "$notification_badge_html" "$automations_html" "$automation_panel_html" "$settings_html"' EXIT
 
 assert_analytics_open_cards() {
   node -e '
@@ -117,6 +118,9 @@ grep --quiet "Owner" "$app_html"
 grep --quiet "data-column-id=" "$app_html"
 grep --quiet "data-card-id=" "$app_html"
 grep --quiet "data-wip-count" "$app_html"
+test "$(grep -o 'data-wip-count' "$app_html" | wc -l | tr -d ' ')" = "1"
+grep --quiet "data-board-progress" "$app_html"
+test "$(grep -o 'data-lane-card-create' "$app_html" | wc -l | tr -d ' ')" = "4"
 grep --quiet "data-workspace-menu-toggle" "$app_html"
 grep --quiet '<!doctype html>' "$app_html"
 grep --quiet 'class="workspace-sidebar"' "$app_html"
@@ -540,6 +544,25 @@ test -n "$target_column_id"
 test -n "$last_column_id"
 test -n "$card_id"
 
+initial_board_revision="$(sed -n 's/.*data-board-revision="\([^"]*\)".*/\1/p' "$app_html" | head -1)"
+test -n "$initial_board_revision"
+revision_status="$(
+  curl --silent --show-error --dump-header "$board_revision_headers" \
+    --output "$partial_html" --write-out '%{http_code}' \
+    --cookie "$cookie_jar" \
+    "$base_url/app/boards/$analytics_initial_board_id/revision"
+)"
+test "$revision_status" = "200"
+grep --quiet -E '"(revision|REVISION)"' "$partial_html"
+board_revision_etag="$(sed -n 's/^[Ee][Tt][Aa][Gg]:[[:space:]]*\(.*\)\r$/\1/p' "$board_revision_headers" | head -1)"
+test -n "$board_revision_etag"
+unchanged_revision_status="$(
+  curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+    --cookie "$cookie_jar" --header "If-None-Match: $board_revision_etag" \
+    "$base_url/app/boards/$analytics_initial_board_id/revision"
+)"
+test "$unchanged_revision_status" = "304"
+
 move_response="$(
   curl --fail --silent --show-error \
     --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
@@ -551,6 +574,12 @@ if ! printf '%s' "$move_response" | grep --quiet -E '"(success|SUCCESS)"[[:space
   echo "Unexpected card movement response: $move_response" >&2
   exit 1
 fi
+changed_revision_status="$(
+  curl --silent --show-error --output "$partial_html" --write-out '%{http_code}' \
+    --cookie "$cookie_jar" --header "If-None-Match: $board_revision_etag" \
+    "$base_url/app/boards/$analytics_initial_board_id/revision"
+)"
+test "$changed_revision_status" = "200"
 
 create_status="$(
   curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
@@ -565,7 +594,10 @@ test "$create_status" = "302"
 
 curl --fail --silent --show-error --cookie "$cookie_jar" "$base_url/app" > "$app_html"
 grep --quiet "CI live card" "$app_html"
-managed_card_id="$(grep --before-context=1 "CI live card" "$app_html" | grep -o 'data-card-id="[^"]*"' | tail -1 | cut -d'"' -f2)"
+managed_card_id="$(
+  sed -n '/data-card-title="CI&#x20;live&#x20;card"/ s/.*data-card-id="\([^"]*\)".*/\1/p' \
+    "$app_html" | head -1
+)"
 test -n "$managed_card_id"
 
 curl --fail --silent --show-error --cookie "$cookie_jar" \
@@ -573,8 +605,8 @@ curl --fail --silent --show-error --cookie "$cookie_jar" \
 grep --quiet "Card details" "$card_html"
 card_csrf_token="$(sed -n 's/.*data-card-csrf-token="\([^"]*\)".*/\1/p' "$card_html" | head -1)"
 owner_user_id="$(
-  grep -o 'value="[^"]*"[^>]*>CI Owner Updated</option>' "$card_html" \
-    | head -1 | sed -n 's/value="\([^"]*\)".*/\1/p'
+  sed -n '/data-assignee-member-name="CI&#x20;Owner&#x20;Updated"/ s/.*data-assignee-member-id="\([^"]*\)".*/\1/p' \
+    "$card_html" | head -1
 )"
 test -n "$card_csrf_token"
 test -n "$owner_user_id"
@@ -589,9 +621,10 @@ card_update_result="$(
     --data-urlencode "title=CI managed card" \
     --data-urlencode "description=Updated through card management" \
     --data-urlencode "priority=high" \
-    --data-urlencode "assigneeId=$owner_user_id" \
+    --data-urlencode "assigneeIds=$owner_user_id" \
     --data-urlencode "dueDate=$upcoming_date" \
-    --data-urlencode "labels=ci, regression"
+    --data-urlencode "labels=ci, regression" \
+    --data-urlencode "isBlocked=true"
 )"
 if [[ "$card_update_result" != 302*"updated=1" ]]; then
   echo "Unexpected card update redirect: $card_update_result" >&2
@@ -608,6 +641,11 @@ fi
 grep --quiet "Updated through card management" "$card_html"
 grep --quiet 'value="ci,regression"' "$card_html"
 grep --quiet "updated the card" "$card_html"
+grep --quiet 'class="card-state-chip is-blocked"' "$card_html"
+grep 'name="isBlocked"' "$card_html" | grep --quiet 'checked'
+
+curl --fail --silent --show-error --cookie "$cookie_jar" "$base_url/app" > "$app_html"
+grep 'data-card-id="'"$managed_card_id"'"' "$app_html" | grep --quiet 'is-blocked'
 
 curl --fail --silent --show-error --cookie "$cookie_jar" \
   "$base_url/app/my-work" > "$my_work_html"
@@ -861,6 +899,14 @@ lifecycle_completed_card_id="$(
 )"
 test -n "$lifecycle_intermediate_card_id"
 test -n "$lifecycle_completed_card_id"
+if ! grep --quiet -E 'class="[^"]*is-completed[^"]*"[^>]*data-card-title="CI&#x20;lifecycle&#x20;completed&#x20;card"[^>]*data-card-completed="true"' "$app_html"; then
+  grep 'data-card-title="CI&#x20;lifecycle&#x20;completed&#x20;card"' "$app_html" >&2
+  exit 1
+fi
+if ! grep --quiet -E 'data-card-title="CI&#x20;lifecycle&#x20;intermediate&#x20;card"[^>]*data-card-completed="false"' "$app_html"; then
+  grep 'data-card-title="CI&#x20;lifecycle&#x20;intermediate&#x20;card"' "$app_html" >&2
+  exit 1
+fi
 
 if [[ "$analytics_exact_fixture" = "true" ]]; then
   lifecycle_db_state="$(
@@ -1116,6 +1162,27 @@ board_csrf_token="$(
     "$boards_html" | head -1
 )"
 test -n "$board_csrf_token"
+
+completion_lane_id="$(
+  sed -n '/data-completion-lane="true"/ s/.*data-lane-id="\([^"]*\)".*/\1/p' \
+    "$boards_html" | head -1
+)"
+test -n "$completion_lane_id"
+grep --quiet "data-lane-id=\"$completion_lane_id\".*data-completion-lane=\"true\"" "$boards_html"
+grep --quiet "Completion" "$boards_html"
+completion_hide_redirect="$(
+  curl --silent --show-error --output /dev/null --write-out '%{redirect_url}' \
+    --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+    --request POST "$base_url/app/boards/$managed_board_id/lanes/$completion_lane_id/update" \
+    --data-urlencode "csrfToken=$board_csrf_token" \
+    --data-urlencode "name=Done" \
+    --data-urlencode "color=green" \
+    --data-urlencode "wipLimit=" \
+    --data-urlencode "hiddenFromMembers=true"
+)"
+curl --fail --silent --show-error --cookie "$cookie_jar" \
+  "$completion_hide_redirect" > "$boards_html"
+grep --quiet "completion lane must remain visible" "$boards_html"
 
 curl --fail --silent --show-error --output /dev/null \
   --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
@@ -1502,8 +1569,8 @@ notification_card_csrf="$(
   sed -n 's/.*data-card-csrf-token="\([^"]*\)".*/\1/p' "$card_html" | head -1
 )"
 member_user_id="$(
-  grep -o 'value="[^"]*"[^>]*>CI Member</option>' "$card_html" \
-    | head -1 | sed -n 's/value="\([^"]*\)".*/\1/p'
+  sed -n '/data-assignee-member-name="CI&#x20;Member"/ s/.*data-assignee-member-id="\([^"]*\)".*/\1/p' \
+    "$card_html" | head -1
 )"
 test -n "$notification_card_csrf"
 test -n "$member_user_id"
@@ -1516,7 +1583,8 @@ notification_assignment_result="$(
     --data-urlencode "title=CI member notification card" \
     --data-urlencode "description=Temporary card for notification smoke coverage" \
     --data-urlencode "priority=medium" \
-    --data-urlencode "assigneeId=$member_user_id" \
+    --data-urlencode "assigneeIds=$owner_user_id" \
+    --data-urlencode "assigneeIds=$member_user_id" \
     --data-urlencode "dueDate=" \
     --data-urlencode "labels=notification"
 )"
@@ -1524,6 +1592,10 @@ if [[ "$notification_assignment_result" != 302*"updated=1" ]]; then
   echo "Assigning the notification card returned an unexpected result: $notification_assignment_result" >&2
   exit 1
 fi
+
+curl --fail --silent --show-error --cookie "$cookie_jar" \
+  "$base_url/app/cards/$notification_card_id" > "$card_html"
+test "$(grep 'name="assigneeIds"' "$card_html" | grep -c 'checked')" = "2"
 
 # The scheduler processes the outbox independently; the inbox eventually exposes the assignment.
 wait_for_notification_center \
@@ -1967,7 +2039,7 @@ hidden_card_update_result="$(
     --data-urlencode "title=CI hidden archive card" \
     --data-urlencode "description=Visible only to workspace administrators" \
     --data-urlencode "priority=low" \
-    --data-urlencode "assigneeId=$member_user_id" \
+    --data-urlencode "assigneeIds=$member_user_id" \
     --data-urlencode "dueDate=" \
     --data-urlencode "labels=archive"
 )"
@@ -2148,6 +2220,22 @@ board_csrf_token="$(
     "$boards_html" | head -1
 )"
 test -n "$board_csrf_token"
+hidden_reopen_fixture="false"
+if command -v docker > /dev/null 2>&1 \
+  && hidden_reopen_db_user="$(docker compose exec -T postgres printenv POSTGRES_USER 2> /dev/null | tr -d '\r')" \
+  && hidden_reopen_db_name="$(docker compose exec -T postgres printenv POSTGRES_DB 2> /dev/null | tr -d '\r')"; then
+  printf '%s\n' \
+    "UPDATE card" \
+    "   SET completed_at=now(),version=version+1,updated_at=clock_timestamp()" \
+    " WHERE id=CAST(:'card_id' AS UUID);" \
+    | docker compose exec -T postgres psql \
+      --username "$hidden_reopen_db_user" \
+      --dbname "$hidden_reopen_db_name" \
+      --set ON_ERROR_STOP=1 \
+      --set card_id="$hidden_card_id" \
+      --quiet --file=-
+  hidden_reopen_fixture="true"
+fi
 curl --fail --silent --show-error --output /dev/null \
   --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
   --request POST "$base_url/app/boards/$managed_board_id/lanes/$hidden_lane_id/update" \
@@ -2161,6 +2249,24 @@ curl --fail --silent --show-error --cookie "$member_cookie_jar" \
   "$base_url/app?boardId=$managed_board_id" > "$app_html"
 grep --quiet "CI Hidden Archive" "$app_html"
 grep --quiet "CI hidden archive card" "$app_html"
+if [[ "$hidden_reopen_fixture" = "true" ]]; then
+  grep 'data-card-title="CI&#x20;hidden&#x20;archive&#x20;card"' "$app_html" \
+    | grep --quiet 'data-card-completed="false"'
+  hidden_reopen_state="$(
+    printf '%s\n' \
+      "SELECT completed_at IS NULL" \
+      "FROM card" \
+      "WHERE id=CAST(:'card_id' AS UUID);" \
+      | docker compose exec -T postgres psql \
+        --username "$hidden_reopen_db_user" \
+        --dbname "$hidden_reopen_db_name" \
+        --set ON_ERROR_STOP=1 \
+        --set card_id="$hidden_card_id" \
+        --quiet --tuples-only --no-align --file=- \
+      | tr -d '\r[:space:]'
+  )"
+  test "$hidden_reopen_state" = "t"
+fi
 curl --fail --silent --show-error --cookie "$member_cookie_jar" \
   "$base_url/app/cards/$hidden_card_id" > "$card_html"
 grep --quiet "hidden-archive.txt" "$card_html"
@@ -2577,8 +2683,8 @@ grep --quiet "Qualidade e interpretação dos dados" "$analytics_html"
 curl --fail --silent --show-error --cookie "$cookie_jar" \
   "$base_url/app/automations" > "$automations_html"
 grep --quiet "Regras de fluxo" "$automations_html"
-grep --quiet "Card entrar em" "$automations_html"
-grep --quiet "Notificar" "$automations_html"
+grep --quiet "Regras do workspace" "$automations_html"
+grep --quiet "Consulte as regras de passagem" "$automations_html"
 curl --fail --silent --show-error --cookie "$cookie_jar" \
   "$base_url/app/settings" > "$settings_html"
 grep --quiet "Governança do workspace" "$settings_html"
@@ -2590,9 +2696,13 @@ if command -v docker > /dev/null 2>&1 \
   && smoke_db_user="$(docker compose exec -T postgres printenv POSTGRES_USER 2> /dev/null | tr -d '\r')" \
   && smoke_db_name="$(docker compose exec -T postgres printenv POSTGRES_DB 2> /dev/null | tr -d '\r')"; then
   printf '%s\n' \
-    "UPDATE card" \
-    "   SET assignee_id=(SELECT id FROM app_user WHERE email=:'member_email')" \
-    " WHERE id=CAST(:'managed_card_id' AS UUID);" \
+    "INSERT INTO card_assignee(workspace_id,card_id,user_id)" \
+    "SELECT card_record.workspace_id,card_record.id,member.id" \
+    "  FROM card card_record" \
+    " CROSS JOIN app_user member" \
+    " WHERE card_record.id=CAST(:'managed_card_id' AS UUID)" \
+    "   AND member.email=:'member_email'" \
+    "ON CONFLICT DO NOTHING;" \
     "DELETE FROM workspace_member" \
     " WHERE user_id=(SELECT id FROM app_user WHERE email=:'member_email');" \
     | docker compose exec -T postgres psql \

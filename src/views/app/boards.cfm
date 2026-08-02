@@ -2,7 +2,7 @@
     management=prc.management;
     selected=management.selectedBoard;
     noticeKeys="created,saved,archived,restored,board_moved,lane_created,lane_saved,lane_deleted,lane_moved";
-    errorKeys="expired,invalid,forbidden,board_limit,last_board,lane_limit,last_lane,lane_not_empty,invalid_wip,not_found";
+    errorKeys="expired,invalid,forbidden,board_limit,last_board,lane_limit,last_lane,lane_not_empty,completion_lane_required,invalid_wip,not_found";
     noticeKey=listFindNoCase(noticeKeys,prc.notice)?prc.notice:"";
     errorKey=listFindNoCase(errorKeys,prc.error)?prc.error:"generic";
     backUrl="/app";
@@ -90,15 +90,16 @@
                     <div class="lane-management-list">
                         <cfloop array="#management.lanes#" item="lane" index="laneIndex">
                             <cfset laneHiddenFromMembers=lane.is_hidden_from_members ?: false>
-                            <article class="lane-management-row lane-color-#encodeForHTMLAttribute(lane.color)##laneHiddenFromMembers ? ' is-hidden-from-members' : ''#" data-lane-id="#encodeForHTMLAttribute(lane.id)#" data-lane-name="#encodeForHTMLAttribute(lane.name)#" data-hidden-from-members="#laneHiddenFromMembers ? 'true' : 'false'#">
+                            <cfset laneIsCompletion=lane.is_completion_lane ?: false>
+                            <article class="lane-management-row lane-color-#encodeForHTMLAttribute(lane.color)##laneHiddenFromMembers ? ' is-hidden-from-members' : ''#" data-lane-id="#encodeForHTMLAttribute(lane.id)#" data-lane-name="#encodeForHTMLAttribute(lane.name)#" data-hidden-from-members="#laneHiddenFromMembers ? 'true' : 'false'#" data-completion-lane="#laneIsCompletion ? 'true' : 'false'#">
                                 <span class="lane-color-mark"></span>
                                 <cfif management.canManage && !selected.is_archived>
                                     <form class="lane-edit-form" method="post" action="/app/boards/#encodeForURL(selected.id)#/lanes/#encodeForURL(lane.id)#/update" hx-post="/app/boards/#encodeForURL(selected.id)#/lanes/#encodeForURL(lane.id)#/update" hx-target="##workspace-main" hx-select="##workspace-main" hx-swap="outerHTML">
                                         <input type="hidden" name="csrfToken" value="#encodeForHTMLAttribute(prc.boardCsrfToken)#">
-                                        <label><span class="lane-field-heading"><span>#$r("lanes.name")#</span><cfif laneHiddenFromMembers><span class="lane-hidden-badge" title="#encodeForHTMLAttribute($r('lanes.hiddenHint'))#"><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##lock"></use></svg> #$r("lanes.hiddenBadge")#</span></cfif></span><input name="name" value="#encodeForHTMLAttribute(lane.name)#" required maxlength="120"></label>
+                                        <label><span class="lane-field-heading"><span>#$r("lanes.name")#</span><cfif laneIsCompletion><span class="lane-hidden-badge lane-completion-badge" title="#encodeForHTMLAttribute($r('lanes.completionHint'))#"><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##check"></use></svg> #$r("lanes.completionBadge")#</span></cfif><cfif laneHiddenFromMembers><span class="lane-hidden-badge" title="#encodeForHTMLAttribute($r('lanes.hiddenHint'))#"><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##lock"></use></svg> #$r("lanes.hiddenBadge")#</span></cfif></span><input name="name" value="#encodeForHTMLAttribute(lane.name)#" required maxlength="120"></label>
                                         <label><span>#$r("lanes.color")#</span><select name="color"><cfloop list="red,blue,amber,green,purple,slate" item="color"><option value="#color#" #lane.color==color ? "selected" : ""#>#$r("lanes.color.#color#")#</option></cfloop></select></label>
                                         <label><span>#$r("lanes.wip")#</span><input name="wipLimit" type="number" min="1" max="999" value="#isNull(lane.wip_limit) ? '' : encodeForHTMLAttribute(lane.wip_limit)#" placeholder="∞"></label>
-                                        <label class="lane-hidden-field"><span>#$r("lanes.visibility")#</span><span class="lane-hidden-control" title="#encodeForHTMLAttribute($r('lanes.hiddenHint'))#"><input name="hiddenFromMembers" type="checkbox" value="true" #laneHiddenFromMembers ? "checked" : ""#><span>#$r("lanes.hiddenFromMembers")#</span></span></label>
+                                        <label class="lane-hidden-field"><span>#$r("lanes.visibility")#</span><span class="lane-hidden-control" title="#encodeForHTMLAttribute(laneIsCompletion ? $r('lanes.completionHint') : $r('lanes.hiddenHint'))#"><input name="hiddenFromMembers" type="checkbox" value="true" #laneHiddenFromMembers ? "checked" : ""# #laneIsCompletion ? "disabled" : ""#><span>#$r("lanes.hiddenFromMembers")#</span></span></label>
                                         <button class="button button-ghost button-small" type="submit">#$r("lanes.save")#</button>
                                     </form>
                                     <div class="lane-row-actions">

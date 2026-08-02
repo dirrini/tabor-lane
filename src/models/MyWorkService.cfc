@@ -14,7 +14,12 @@ component singleton {
 		};
 		var predicates = [
 			"c.workspace_id=CAST(:workspaceId AS UUID)",
-			"c.assignee_id=CAST(:userId AS UUID)",
+			"EXISTS (
+			    SELECT 1 FROM card_assignee current_assignment
+			    WHERE current_assignment.workspace_id=c.workspace_id
+			      AND current_assignment.card_id=c.id
+			      AND current_assignment.user_id=CAST(:userId AS UUID)
+			)",
 			"c.archived_at IS NULL",
 			"b.is_archived=false",
 			"bc.is_archived=false",
@@ -73,7 +78,8 @@ component singleton {
 			        c.title,LEFT(COALESCE(c.description,''),360) AS description,
 			        c.priority,array_to_string(c.labels, ',') AS labels_csv,
 			        c.due_at,to_char(c.due_at AT TIME ZONE 'UTC','YYYY-MM-DD') AS due_date,
-			        c.completed_at,c.updated_at,c.version,b.name AS board_name,bc.name AS column_name,bc.color AS column_color,
+			        c.completed_at,c.blocked_at,c.blocked_at IS NOT NULL AS is_blocked,
+			        c.updated_at,c.version,b.name AS board_name,bc.name AS column_name,bc.color AS column_color,
 			        CASE
 			          WHEN c.completed_at IS NOT NULL THEN 'completed'
 			          WHEN c.due_at IS NULL THEN 'no_due'
@@ -127,7 +133,12 @@ component singleton {
 			   ON current_member.workspace_id=c.workspace_id
 			  AND current_member.user_id=CAST(:userId AS UUID)
 			 WHERE c.workspace_id=CAST(:workspaceId AS UUID)
-			   AND c.assignee_id=CAST(:userId AS UUID)
+			   AND EXISTS (
+			       SELECT 1 FROM card_assignee summary_assignment
+			       WHERE summary_assignment.workspace_id=c.workspace_id
+			         AND summary_assignment.card_id=c.id
+			         AND summary_assignment.user_id=CAST(:userId AS UUID)
+			   )
 			   AND c.archived_at IS NULL
 			   AND (bc.is_hidden_from_members=false OR current_member.role IN ('owner','admin'))
 			   AND (c.completed_at IS NULL OR c.completed_at>=now()-INTERVAL '7 days')",
@@ -146,7 +157,12 @@ component singleton {
 			           AND assigned_column.is_archived=false
 			          WHERE assigned.board_id=b.id
 			            AND assigned.workspace_id=b.workspace_id
-			            AND assigned.assignee_id=CAST(:userId AS UUID)
+			            AND EXISTS (
+			                SELECT 1 FROM card_assignee board_assignment
+			                WHERE board_assignment.workspace_id=assigned.workspace_id
+			                  AND board_assignment.card_id=assigned.id
+			                  AND board_assignment.user_id=CAST(:userId AS UUID)
+			            )
 			            AND assigned.archived_at IS NULL
 			            AND (assigned_column.is_hidden_from_members=false OR current_member.role IN ('owner','admin'))
 			            AND (assigned.completed_at IS NULL OR assigned.completed_at>=now()-INTERVAL '7 days')
@@ -298,7 +314,12 @@ component singleton {
 				 JOIN workspace_member wm ON wm.workspace_id=c.workspace_id
 				 WHERE c.id=CAST(:cardId AS UUID)
 				   AND c.workspace_id=CAST(:workspaceId AS UUID)
-				   AND c.assignee_id=CAST(:userId AS UUID)
+				   AND EXISTS (
+				       SELECT 1 FROM card_assignee focus_assignment
+				       WHERE focus_assignment.workspace_id=c.workspace_id
+				         AND focus_assignment.card_id=c.id
+				         AND focus_assignment.user_id=CAST(:userId AS UUID)
+				   )
 				   AND c.archived_at IS NULL
 				   AND wm.user_id=CAST(:userId AS UUID)
 				   AND (bc.is_hidden_from_members=false OR wm.role IN ('owner','admin'))

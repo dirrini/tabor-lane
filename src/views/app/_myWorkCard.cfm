@@ -16,6 +16,7 @@
 		<cfif len( trim( card.description ?: "" ) )><p>#encodeForHTML( card.description )#</p></cfif>
 		<cfif len( card.labels_csv ?: "" )><div class="card-labels"><cfloop list="#card.labels_csv#" item="label"><span>#encodeForHTML( label )#</span></cfloop></div></cfif>
 		<div class="my-work-card-badges">
+			<cfif card.is_blocked ?: false><span class="my-work-due-badge blocked-status"><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##alert"></use></svg>#$r( "card.blocked" )#</span></cfif>
 			<span class="priority-chip priority-#encodeForHTMLAttribute( card.priority )#">#$r( "card.priority.#card.priority#" )#</span>
 			<cfif card.bucket == "completed">
 				<span class="my-work-due-badge completed"><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##check"></use></svg>#$r( "myWork.completed" )#</span>

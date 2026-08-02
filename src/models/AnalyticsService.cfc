@@ -163,8 +163,14 @@ component singleton {
 		}
 		if ( normalized.assigneeId.len() ) {
 			params.assigneeId = normalized.assigneeId;
-			historicalPredicates.append( "c.assignee_id=CAST(:assigneeId AS UUID)" );
-			currentPredicates.append( "c.assignee_id=CAST(:assigneeId AS UUID)" );
+			var assigneePredicate = "EXISTS (
+			    SELECT 1 FROM card_assignee analytics_assignment
+			    WHERE analytics_assignment.workspace_id=c.workspace_id
+			      AND analytics_assignment.card_id=c.id
+			      AND analytics_assignment.user_id=CAST(:assigneeId AS UUID)
+			)";
+			historicalPredicates.append( assigneePredicate );
+			currentPredicates.append( assigneePredicate );
 		}
 
 		var summaryRow = queryExecute(
@@ -283,7 +289,12 @@ component singleton {
 		];
 		if ( normalized.boardId.len() ) lanePredicates.append( "b.id=CAST(:boardId AS UUID)" );
 		if ( normalized.assigneeId.len() ) {
-			laneCardPredicates.append( "c.assignee_id=CAST(:assigneeId AS UUID)" );
+			laneCardPredicates.append( "EXISTS (
+			    SELECT 1 FROM card_assignee lane_assignment
+			    WHERE lane_assignment.workspace_id=c.workspace_id
+			      AND lane_assignment.card_id=c.id
+			      AND lane_assignment.user_id=CAST(:assigneeId AS UUID)
+			)" );
 		}
 		var laneRows = queryExecute(
 			"SELECT CAST(b.id AS TEXT) AS board_id,b.name AS board_name,
@@ -397,16 +408,23 @@ component singleton {
 			priorityDistribution.append( priorityPoint );
 		}
 
+		var workloadAssignmentFilter = normalized.assigneeId.len()
+			? " AND assignment.user_id=CAST(:assigneeId AS UUID)"
+			: "";
 		var assigneeRows = queryExecute(
-			"SELECT COALESCE(CAST(c.assignee_id AS TEXT),'') AS assignee_id,
+			"SELECT COALESCE(CAST(assignment.user_id AS TEXT),'') AS assignee_id,
 			        COALESCE(assigned_user.display_name,'') AS assignee_name,
 			        COUNT(*) AS card_count
 			 FROM card c
 			 JOIN board b ON b.id=c.board_id AND b.workspace_id=c.workspace_id
 			 JOIN board_column bc ON bc.id=c.column_id AND bc.board_id=c.board_id
-			 LEFT JOIN app_user assigned_user ON assigned_user.id=c.assignee_id
+			 LEFT JOIN card_assignee assignment
+			   ON assignment.workspace_id=c.workspace_id
+			  AND assignment.card_id=c.id
+			  #workloadAssignmentFilter#
+			 LEFT JOIN app_user assigned_user ON assigned_user.id=assignment.user_id
 			 WHERE #arrayToList( currentPredicates, ' AND ' )#
-			 GROUP BY c.assignee_id,assigned_user.display_name
+			 GROUP BY assignment.user_id,assigned_user.display_name
 			 ORDER BY COUNT(*) DESC,assigned_user.display_name NULLS LAST",
 			params,
 			{ returntype="array" }
@@ -425,7 +443,7 @@ component singleton {
 		var cycleSamples = integerOrZero( summaryRow.cycle_sample_size );
 		var missingStartedAt = integerOrZero( summaryRow.missing_started_at );
 		var warnings = [
-			"completion_uses_last_visible_lane",
+			"completion_uses_designated_lane",
 			"cycle_time_starts_on_first_lane_change",
 			"historical_throughput_uses_latest_completion"
 		];

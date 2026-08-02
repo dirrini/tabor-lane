@@ -81,6 +81,7 @@ component singleton {
             "UPDATE attachment SET status='available',size_bytes=:size,content_type=:contentType WHERE id=CAST(:id AS UUID)",
             {size={value=object.size,sqltype="bigint"},contentType=left(object.contentType,255),id=arguments.attachmentId}
         );
+        touchCard(arguments.cardId);
         recordActivity(arguments.cardId,arguments.userId,"attached");
         return {success=true};
     }
@@ -121,6 +122,7 @@ component singleton {
         if(!rows.len()) return {success=false,code="not_found"};
         if(!s3StorageService.delete(rows[1].object_key)) return {success=false,code="storage"};
         queryExecute("UPDATE attachment SET status='deleted',deleted_at=now() WHERE id=CAST(:id AS UUID)",{id=arguments.attachmentId});
+        touchCard(arguments.cardId);
         recordActivity(arguments.cardId,arguments.userId,"detached");
         return {success=true};
     }
@@ -156,5 +158,12 @@ component singleton {
     private void function recordActivity(required string cardId,required string userId,required string action){
         queryExecute("INSERT INTO card_activity(card_id,actor_id,action) VALUES(CAST(:card AS UUID),CAST(:user AS UUID),:action)",
             {card=arguments.cardId,user=arguments.userId,action=arguments.action});
+    }
+
+    private void function touchCard(required string cardId){
+        queryExecute(
+            "UPDATE card SET version=version+1,updated_at=now() WHERE id=CAST(:card AS UUID)",
+            {card=arguments.cardId}
+        );
     }
 }

@@ -115,18 +115,56 @@
     const cardFormToggle = workspace.querySelector("[data-card-form-toggle]");
     const cardFormCancel = workspace.querySelector("[data-card-form-cancel]");
     const toast = workspace.querySelector("[data-board-toast]");
+    const viewedLabel = workspace.querySelector("[data-board-viewed-label]");
+    const viewedStartedAt = Date.now();
     let draggedCard = null;
     let dragOrigin = null;
     let dropAttempted = false;
+    let pollTimer = null;
+    let pollController = null;
+    let boardRefreshController = null;
+    let boardRefreshPending = false;
+    let boardCleanedUp = false;
 
     const toggleCardForm = (open) => {
       if (!cardForm) return;
       cardForm.hidden = !open;
+      cardFormToggle?.setAttribute("aria-expanded", String(open));
       if (open) cardForm.querySelector('input[name="title"]')?.focus();
     };
 
     cardFormToggle?.addEventListener("click", () => toggleCardForm(true));
     cardFormCancel?.addEventListener("click", () => toggleCardForm(false));
+
+    workspace.querySelectorAll("[data-lane-card-create]").forEach((creator) => {
+      const toggle = creator.querySelector("[data-lane-card-toggle]");
+      const form = creator.querySelector("[data-lane-card-form]");
+      const cancel = creator.querySelector("[data-lane-card-cancel]");
+      const setOpen = (open) => {
+        if (!form) return;
+        form.hidden = !open;
+        if (toggle) {
+          toggle.hidden = open;
+          toggle.setAttribute("aria-expanded", String(open));
+        }
+        if (open) form.querySelector('input[name="title"]')?.focus();
+        else form.reset();
+      };
+      toggle?.addEventListener("click", () => {
+        workspace.querySelectorAll("[data-lane-card-form]:not([hidden])").forEach((openForm) => {
+          openForm.hidden = true;
+          openForm.reset();
+          const openCreator = openForm.closest("[data-lane-card-create]");
+          const openToggle = openCreator?.querySelector("[data-lane-card-toggle]");
+          if (openToggle) {
+            openToggle.hidden = false;
+            openToggle.setAttribute("aria-expanded", "false");
+          }
+        });
+        setOpen(true);
+      });
+      cancel?.addEventListener("click", () => setOpen(false));
+    });
 
     const showToast = (message) => {
       if (!toast) return;
@@ -144,7 +182,49 @@
         if (counter) counter.textContent = String(count);
         if (wipCounter) wipCounter.textContent = String(count);
         if (empty) empty.hidden = count > 0;
+        const wipContainer = column.querySelector("[data-wip-limit]");
+        const wipProgress = column.querySelector("[data-wip-progress]");
+        if (wipContainer && wipProgress) {
+          const limit = Number(wipContainer.dataset.wipLimit);
+          const percent = limit > 0 ? Math.min(100, Math.round(count * 100 / limit)) : 0;
+          wipProgress.setAttribute("aria-valuenow", String(Math.min(count, limit)));
+          wipProgress.setAttribute(
+            "aria-valuetext",
+            wipContainer.dataset.wipValueTemplate
+              .replace("{count}", String(count))
+              .replace("{limit}", String(limit)),
+          );
+          wipProgress.querySelector("i")?.style.setProperty("width", `${percent}%`);
+          wipContainer.classList.toggle("is-at-limit", limit > 0 && count >= limit);
+          wipContainer.classList.toggle(
+            "is-near-limit",
+            limit > 0 && count < limit && count * 100 / limit >= 75,
+          );
+        }
       });
+      const progressCards = workspace.querySelectorAll(
+        '[data-column-id][data-hidden-from-members="false"] [data-card-id]',
+      );
+      const total = progressCards.length;
+      const completed = [...progressCards].filter(
+        (card) => card.dataset.cardCompleted === "true",
+      ).length;
+      const percent = total > 0 ? Math.round(completed * 100 / total) : 0;
+      const totalCounter = workspace.querySelector("[data-board-total-count]");
+      const completedCounter = workspace.querySelector("[data-board-completed-count]");
+      const progressLabel = workspace.querySelector("[data-board-progress-label]");
+      const progress = workspace.querySelector("[data-board-progress]");
+      if (totalCounter) totalCounter.textContent = String(total);
+      if (completedCounter) completedCounter.textContent = String(completed);
+      if (progressLabel) {
+        progressLabel.textContent = total === 1
+          ? progressLabel.dataset.singular
+          : progressLabel.dataset.plural;
+      }
+      if (progress) {
+        progress.setAttribute("aria-valuenow", String(percent));
+        progress.querySelector("i")?.style.setProperty("width", `${percent}%`);
+      }
     };
 
     const restoreDraggedCard = () => {
@@ -242,6 +322,17 @@
           const result = await response.json();
           const moveSucceeded = result.success ?? result.SUCCESS;
           if (!response.ok || !moveSucceeded) throw new Error("Move rejected");
+          const completionState = column.dataset.completionState;
+          if (completionState !== "preserve") {
+            const completed = completionState === "complete";
+            card.classList.toggle("is-completed", completed);
+            card.dataset.cardCompleted = String(completed);
+            const completedLabel = card.querySelector("[data-card-completed-label]");
+            if (completedLabel) completedLabel.hidden = !completed;
+          }
+          const revision = result.revision ?? result.REVISION;
+          if (revision) workspace.dataset.boardRevision = revision;
+          updateColumnState();
           showToast(workspace.dataset.moveSuccess);
         } catch (error) {
           restoreDraggedCard();
@@ -343,6 +434,184 @@
         saveLaneLayout(column);
       });
     });
+
+    const updateViewedLabel = () => {
+      if (!viewedLabel) return;
+      const elapsedMinutes = Math.floor((Date.now() - viewedStartedAt) / 60000);
+      if (elapsedMinutes < 1) {
+        viewedLabel.textContent = workspace.dataset.viewedNow;
+      } else if (elapsedMinutes < 60) {
+        viewedLabel.textContent = workspace.dataset.viewedMinutes.replace(
+          "{count}",
+          String(elapsedMinutes),
+        );
+      } else {
+        viewedLabel.textContent = workspace.dataset.viewedHours.replace(
+          "{count}",
+          String(Math.floor(elapsedMinutes / 60)),
+        );
+      }
+    };
+
+    const boardIsBusy = () => {
+      const activeElement = document.activeElement;
+      return Boolean(
+        draggedCard
+        || workspace.querySelector(".is-resizing")
+        || workspace.querySelector("[data-card-form]:not([hidden])")
+        || workspace.querySelector("[data-lane-card-form]:not([hidden])")
+        || (
+          activeElement
+          && workspace.contains(activeElement)
+          && activeElement.matches("input, textarea, select, [contenteditable='true']")
+        )
+      );
+    };
+
+    const cleanupBoardSync = () => {
+      boardCleanedUp = true;
+      window.clearTimeout(pollTimer);
+      pollController?.abort();
+      boardRefreshController?.abort();
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("online", handleOnline);
+      document.body.removeEventListener("htmx:beforeRequest", handleWorkspaceHtmxRequest);
+    };
+
+    const refreshBoard = async (url = workspace.dataset.boardRefreshUrl) => {
+      if (boardRefreshPending || !workspace.isConnected) return;
+      if (boardIsBusy()) {
+        scheduleBoardPoll(750);
+        return;
+      }
+      boardRefreshPending = true;
+      const scrollLeft = workspace.querySelector(".workspace-board")?.scrollLeft || 0;
+      boardRefreshController?.abort();
+      boardRefreshController = new AbortController();
+      try {
+        const response = await fetch(url, {
+          headers: {
+            Accept: "text/html",
+            "HX-Request": "true",
+            "HX-Target": "workspace-main",
+          },
+          cache: "no-store",
+          credentials: "same-origin",
+          signal: boardRefreshController.signal,
+        });
+        const responsePath = new URL(response.url, window.location.origin).pathname;
+        if (response.redirected && ["/login", "/check-email"].includes(responsePath)) {
+          window.location.assign(response.url);
+          return;
+        }
+        if (!response.ok || !response.headers.get("content-type")?.includes("text/html")) {
+          throw new Error("Board refresh failed");
+        }
+        const html = await response.text();
+        if (
+          !workspace.isConnected
+          || document.getElementById("workspace-main") !== workspace
+          || boardIsBusy()
+          || document.visibilityState !== "visible"
+          || !navigator.onLine
+        ) {
+          scheduleBoardPoll(750);
+          return;
+        }
+        const parsed = new DOMParser().parseFromString(html, "text/html");
+        const replacement = parsed.querySelector("#workspace-main");
+        if (!replacement) throw new Error("Board refresh markup is missing");
+        const refreshedTitle = parsed.querySelector("title")?.textContent;
+        cleanupBoardSync();
+        workspace.replaceWith(replacement);
+        if (refreshedTitle) document.title = refreshedTitle;
+        window.htmx?.process(replacement);
+        initDynamicContent(replacement);
+        replacement.querySelector(".workspace-board")?.scrollTo({ left: scrollLeft });
+      } catch (error) {
+        if (error.name !== "AbortError") scheduleBoardPoll(2500);
+      } finally {
+        boardRefreshPending = false;
+        if (!boardCleanedUp && workspace.isConnected) scheduleBoardPoll(2500);
+      }
+    };
+
+    const scheduleBoardPoll = (delay = 10000 + Math.floor(Math.random() * 1500)) => {
+      window.clearTimeout(pollTimer);
+      if (!boardCleanedUp && workspace.isConnected) {
+        pollTimer = window.setTimeout(pollBoardRevision, delay);
+      }
+    };
+
+    const pollBoardRevision = async () => {
+      updateViewedLabel();
+      if (boardCleanedUp || !workspace.isConnected) return;
+      if (document.visibilityState !== "visible" || !navigator.onLine) return;
+      if (boardIsBusy()) {
+        scheduleBoardPoll(2500);
+        return;
+      }
+
+      pollController?.abort();
+      pollController = new AbortController();
+      const currentRevision = workspace.dataset.boardRevision;
+      const etag = `"board-${workspace.dataset.boardId.toLowerCase()}-${currentRevision}"`;
+      try {
+        const response = await fetch(workspace.dataset.boardRevisionUrl, {
+          headers: { Accept: "application/json", "If-None-Match": etag },
+          cache: "no-store",
+          signal: pollController.signal,
+        });
+        const responsePath = new URL(response.url, window.location.origin).pathname;
+        if (response.redirected && ["/login", "/check-email"].includes(responsePath)) {
+          window.location.assign(response.url);
+          return;
+        }
+        if (response.status === 304) {
+          scheduleBoardPoll();
+          return;
+        }
+        if (response.status === 404) {
+          refreshBoard("/app");
+          return;
+        }
+        if (!response.ok) throw new Error("Revision request failed");
+        if (!response.headers.get("content-type")?.includes("application/json")) {
+          throw new Error("Revision response is not JSON");
+        }
+        const result = await response.json();
+        const revision = result.revision ?? result.REVISION;
+        if (revision && revision !== currentRevision) {
+          if (boardIsBusy() || document.visibilityState !== "visible" || !navigator.onLine) {
+            scheduleBoardPoll(750);
+            return;
+          }
+          refreshBoard();
+          return;
+        }
+      } catch (error) {
+        if (error.name === "AbortError") return;
+      }
+      scheduleBoardPoll();
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") scheduleBoardPoll(500);
+    };
+    const handleOnline = () => scheduleBoardPoll(500);
+    const handleWorkspaceHtmxRequest = (event) => {
+      const requestTarget = event.detail?.target;
+      if (requestTarget === workspace || requestTarget?.id === "workspace-main") {
+        boardRefreshController?.abort();
+      }
+    };
+    if (!workspace.dataset.boardId || !workspace.dataset.boardRevisionUrl) return;
+    workspace.addEventListener("htmx:beforeCleanupElement", cleanupBoardSync, { once: true });
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("online", handleOnline);
+    document.body.addEventListener("htmx:beforeRequest", handleWorkspaceHtmxRequest);
+    updateViewedLabel();
+    scheduleBoardPoll();
   };
 
   const initCardDetails = (root) => {

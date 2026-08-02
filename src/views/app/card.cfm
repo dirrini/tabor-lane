@@ -3,7 +3,7 @@
     locale = getFWLocale();
     dateMask = locale == "pt_BR" ? "dd/MM/yyyy 'às' HH:mm" : "MMM d, yyyy 'at' h:mm tt";
     labelsValue = card.labels_csv ?: "";
-    knownErrors = "expired,invalid,read_only,invalid_assignee,invalid_comment,attachment_storage";
+    knownErrors = "expired,invalid,read_only,invalid_assignee,invalid_assignees,invalid_comment,attachment_storage";
     errorMessage = listFindNoCase( knownErrors, prc.error )
         ? $r( "card.error.#prc.error#" )
         : $r( "card.error" );
@@ -45,9 +45,13 @@
     <header class="card-details-header">
         <div>
             <small>#encodeForHTML( card.board_name )# · #encodeForHTML( card.column_name )#</small>
-            <h1>#encodeForHTML( card.title )#</h1>
+			<h1 class="#( card.is_completed ?: false ) ? 'is-completed' : ''#">#encodeForHTML( card.title )#</h1>
         </div>
-        <span class="priority-chip priority-#encodeForHTMLAttribute( card.priority )#">#$r( "card.priority.#card.priority#" )#</span>
+        <div class="card-header-statuses">
+            <cfif card.is_blocked ?: false><span class="card-state-chip is-blocked"><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##alert"></use></svg>#$r( "card.blocked" )#</span></cfif>
+			<cfif card.is_completed ?: false><span class="card-state-chip is-completed"><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##check"></use></svg>#$r( "card.completed" )#</span></cfif>
+            <span class="priority-chip priority-#encodeForHTMLAttribute( card.priority )#">#$r( "card.priority.#card.priority#" )#</span>
+        </div>
     </header>
 
     <cfif prc.notice.len()><div class="form-success">#$r( "card.#prc.notice#" )#</div></cfif>
@@ -70,9 +74,22 @@
                     <label>#$r( "app.card.title" )#<input name="title" maxlength="255" required value="#encodeForHTMLAttribute( card.title )#" #prc.canEditCard ? "" : "disabled"#></label>
                     <label class="card-form-wide">#$r( "card.description" )#<textarea name="description" rows="7" maxlength="20000" #prc.canEditCard ? "" : "disabled"#>#encodeForHTML( card.description ?: "" )#</textarea></label>
                     <label>#$r( "card.priority" )#<select name="priority" #prc.canEditCard ? "" : "disabled"#><cfloop list="none,low,medium,high,urgent" item="priority"><option value="#priority#" #card.priority == priority ? "selected" : ""#>#$r( "card.priority.#priority#" )#</option></cfloop></select></label>
-                    <label>#$r( "card.assignee" )#<select name="assigneeId" #prc.canEditCard ? "" : "disabled"#><option value="">#$r( "card.unassigned" )#</option><cfloop array="#prc.cardDetails.members#" item="member"><option value="#encodeForHTMLAttribute( member.id )#" #card.assignee_id == member.id ? "selected" : ""#>#encodeForHTML( member.display_name )#</option></cfloop></select></label>
+                    <fieldset class="card-assignee-picker card-form-wide">
+                        <legend>#$r( "card.assignees" )#</legend>
+                        <p>#$r( "card.assigneesHint" )#</p>
+                        <div>
+                            <cfloop array="#prc.cardDetails.members#" item="member">
+                                <label class="card-assignee-option" data-assignee-member-id="#encodeForHTMLAttribute( member.id )#" data-assignee-member-name="#encodeForHTMLAttribute( member.display_name )#">
+                                    <input type="checkbox" name="assigneeIds" value="#encodeForHTMLAttribute( member.id )#" #member.is_assigned ? "checked" : ""# #prc.canEditCard ? "" : "disabled"#>
+                                    <span class="user-avatar account-avatar"><span>#encodeForHTML( member.initials )#</span><cfif len( member.avatar_id ?: "" )><img src="/app/users/#encodeForURL( member.id )#/avatar?v=#encodeForURL( member.avatar_id )#" alt=""></cfif></span>
+                                    <strong>#encodeForHTML( member.display_name )#</strong>
+                                </label>
+                            </cfloop>
+                        </div>
+                    </fieldset>
                     <label>#$r( "card.dueDate" )#<input type="date" name="dueDate" value="#encodeForHTMLAttribute( card.due_date ?: "" )#" #prc.canEditCard ? "" : "disabled"#></label>
                     <label>#$r( "card.labels" )#<input name="labels" maxlength="410" value="#encodeForHTMLAttribute( labelsValue )#" #prc.canEditCard ? "" : "disabled"#><small>#$r( "card.labelsHint" )#</small></label>
+                    <label class="card-blocked-control card-form-wide"><input type="checkbox" name="isBlocked" value="true" #card.is_blocked ? "checked" : ""# #prc.canEditCard ? "" : "disabled"#><span><strong>#$r( "card.blocked" )#</strong><small>#$r( "card.blockedHint" )#</small></span></label>
                     <cfif prc.canEditCard><button class="button button-primary card-form-submit" type="submit">#$r( "card.save" )#</button></cfif>
                 </form>
             </section>

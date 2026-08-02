@@ -41,7 +41,7 @@ component singleton {
         if(selected.count()){
             lanes=queryExecute(
                 "SELECT CAST(bc.id AS TEXT) id,bc.name,bc.position,bc.wip_limit,bc.color,
-                        bc.is_hidden_from_members,
+                        bc.is_hidden_from_members,bc.is_completion_lane,
                         COUNT(c.id) card_count,
                         COUNT(c.id) FILTER (WHERE c.archived_at IS NULL) active_card_count
                  FROM board_column bc LEFT JOIN card c ON c.column_id=bc.id
@@ -119,9 +119,13 @@ component singleton {
                     );
                     for(var i=1;i<=laneNames.len();i++){
                         queryExecute(
-                            "INSERT INTO board_column(board_id,name,position,color)
-                             VALUES(CAST(:board AS UUID),:name,CAST(:position AS NUMERIC),:color)",
-                            {board=boardId,name=laneNames[i],position=i,color=laneColor(i)}
+                            "INSERT INTO board_column(board_id,name,position,color,is_completion_lane)
+                             VALUES(CAST(:board AS UUID),:name,CAST(:position AS NUMERIC),:color,
+                                    CAST(:isCompletion AS BOOLEAN))",
+                            {
+                                board=boardId,name=laneNames[i],position=i,color=laneColor(i),
+                                isCompletion=i==laneNames.len()
+                            }
                         );
                     }
                     outcome={success=true,boardId=boardId};
@@ -215,30 +219,42 @@ component singleton {
         string wipLimit = "",
         boolean hiddenFromMembers = false
     ){
-        var access=boardAccess(arguments.userId,arguments.workspaceId,arguments.boardId);
-        if(!canManage(access) || access.is_archived) return {success=false,code="forbidden"};
         var validation=validateLane(arguments.name,arguments.color,arguments.wipLimit);
         if(!validation.success) return validation;
-        var laneCount=queryExecute(
-            "SELECT COUNT(*) total FROM board_column WHERE board_id=CAST(:board AS UUID) AND is_archived=false",
-            {board=arguments.boardId},{returntype="array"}
-        )[1].total;
-        if(laneCount>=20) return {success=false,code="lane_limit"};
-        queryExecute(
-            "INSERT INTO board_column(board_id,name,position,wip_limit,color,is_hidden_from_members)
-             VALUES(CAST(:board AS UUID),:name,
-                    (SELECT COALESCE(MAX(position),0)+1 FROM board_column WHERE board_id=CAST(:board AS UUID)),
-                    CASE WHEN :wip='' THEN NULL ELSE CAST(:wip AS INTEGER) END,:color,
-                    CAST(:hiddenFromMembers AS BOOLEAN))",
-            {
-                board=arguments.boardId,
-                name=validation.name,
-                wip=validation.wip,
-                color=validation.color,
-                hiddenFromMembers=arguments.hiddenFromMembers
+        var outcome={success=false,code="forbidden",boardId=arguments.boardId};
+        transaction {
+            var access=lockBoardForLaneManagement(
+                arguments.userId,arguments.workspaceId,arguments.boardId
+            );
+            if(canManage(access) && !access.is_archived){
+                var laneCount=queryExecute(
+                    "SELECT COUNT(*) total FROM board_column
+                     WHERE board_id=CAST(:board AS UUID) AND is_archived=false",
+                    {board=arguments.boardId},{returntype="array"}
+                )[1].total;
+                if(laneCount>=20){
+                    outcome={success=false,code="lane_limit",boardId=arguments.boardId};
+                } else {
+                    queryExecute(
+                        "INSERT INTO board_column(board_id,name,position,wip_limit,color,is_hidden_from_members)
+                         VALUES(CAST(:board AS UUID),:name,
+                                (SELECT COALESCE(MAX(position),0)+1 FROM board_column
+                                 WHERE board_id=CAST(:board AS UUID)),
+                                CASE WHEN :wip='' THEN NULL ELSE CAST(:wip AS INTEGER) END,
+                                :color,CAST(:hiddenFromMembers AS BOOLEAN))",
+                        {
+                            board=arguments.boardId,
+                            name=validation.name,
+                            wip=validation.wip,
+                            color=validation.color,
+                            hiddenFromMembers=arguments.hiddenFromMembers
+                        }
+                    );
+                    outcome={success=true,boardId=arguments.boardId};
+                }
             }
-        );
-        return {success=true,boardId=arguments.boardId};
+        }
+        return outcome;
     }
 
     struct function updateLane(
@@ -251,27 +267,63 @@ component singleton {
         string wipLimit = "",
         boolean hiddenFromMembers = false
     ){
-        var access=laneAccess(arguments.userId,arguments.workspaceId,arguments.boardId,arguments.laneId);
-        if(!canManage(access) || access.is_archived) return {success=false,code="forbidden"};
         var validation=validateLane(arguments.name,arguments.color,arguments.wipLimit);
         if(!validation.success) return validation;
-        queryExecute(
-            "UPDATE board_column SET name=:name,
-                    wip_limit=CASE WHEN :wip='' THEN NULL ELSE CAST(:wip AS INTEGER) END,
-                    color=:color,
-                    is_hidden_from_members=CAST(:hiddenFromMembers AS BOOLEAN),
-                    updated_at=now()
-             WHERE id=CAST(:lane AS UUID) AND board_id=CAST(:board AS UUID)",
-            {
-                name=validation.name,
-                wip=validation.wip,
-                color=validation.color,
-                hiddenFromMembers=arguments.hiddenFromMembers,
-                lane=arguments.laneId,
-                board=arguments.boardId
+        var outcome={success=false,code="forbidden",boardId=arguments.boardId};
+        transaction {
+            var access=lockBoardForLaneManagement(
+                arguments.userId,arguments.workspaceId,arguments.boardId
+            );
+            if(canManage(access) && !access.is_archived){
+                var lanes=queryExecute(
+                    "SELECT is_completion_lane,is_hidden_from_members
+                     FROM board_column
+                     WHERE id=CAST(:lane AS UUID)
+                       AND board_id=CAST(:board AS UUID)
+                       AND is_archived=false
+                     FOR UPDATE",
+                    {lane=arguments.laneId,board=arguments.boardId},
+                    {returntype="array"}
+                );
+                if(!lanes.len()){
+                    outcome={success=false,code="not_found",boardId=arguments.boardId};
+                } else if(lanes[1].is_completion_lane && arguments.hiddenFromMembers){
+                    outcome={success=false,code="completion_lane_required",boardId=arguments.boardId};
+                } else {
+                    queryExecute(
+                        "UPDATE board_column SET name=:name,
+                                wip_limit=CASE WHEN :wip='' THEN NULL ELSE CAST(:wip AS INTEGER) END,
+                                color=:color,
+                                is_hidden_from_members=CAST(:hiddenFromMembers AS BOOLEAN),
+                                updated_at=now()
+                         WHERE id=CAST(:lane AS UUID) AND board_id=CAST(:board AS UUID)",
+                        {
+                            name=validation.name,
+                            wip=validation.wip,
+                            color=validation.color,
+                            hiddenFromMembers=arguments.hiddenFromMembers,
+                            lane=arguments.laneId,
+                            board=arguments.boardId
+                        }
+                    );
+                    if(!lanes[1].is_completion_lane && !arguments.hiddenFromMembers){
+                        queryExecute(
+                            "UPDATE card
+                             SET completed_at=NULL,
+                                 version=version+1,
+                                 updated_at=clock_timestamp()
+                             WHERE board_id=CAST(:board AS UUID)
+                               AND column_id=CAST(:lane AS UUID)
+                               AND archived_at IS NULL
+                               AND completed_at IS NOT NULL",
+                            {board=arguments.boardId,lane=arguments.laneId}
+                        );
+                    }
+                    outcome={success=true,boardId=arguments.boardId};
+                }
             }
-        );
-        return {success=true,boardId=arguments.boardId};
+        }
+        return outcome;
     }
 
     struct function deleteLane(
@@ -280,23 +332,95 @@ component singleton {
         required string boardId,
         required string laneId
     ){
-        var access=laneAccess(arguments.userId,arguments.workspaceId,arguments.boardId,arguments.laneId);
-        if(!canManage(access) || access.is_archived) return {success=false,code="forbidden"};
-        var laneCount=queryExecute(
-            "SELECT COUNT(*) total FROM board_column WHERE board_id=CAST(:board AS UUID) AND is_archived=false",
-            {board=arguments.boardId},{returntype="array"}
-        )[1].total;
-        if(laneCount<=1) return {success=false,code="last_lane"};
-        var cardCount=queryExecute(
-            "SELECT COUNT(*) total FROM card WHERE column_id=CAST(:lane AS UUID) AND archived_at IS NULL",
-            {lane=arguments.laneId},{returntype="array"}
-        )[1].total;
-        if(cardCount>0) return {success=false,code="lane_not_empty"};
-        queryExecute(
-            "UPDATE board_column SET is_archived=true,updated_at=now() WHERE id=CAST(:lane AS UUID)",
-            {lane=arguments.laneId}
-        );
-        return {success=true,boardId=arguments.boardId};
+        var outcome={success=false,code="forbidden",boardId=arguments.boardId};
+        transaction {
+            var access=lockBoardForLaneManagement(
+                arguments.userId,arguments.workspaceId,arguments.boardId
+            );
+            if(canManage(access) && !access.is_archived){
+                var lanes=queryExecute(
+                    "SELECT is_completion_lane
+                     FROM board_column
+                     WHERE id=CAST(:lane AS UUID)
+                       AND board_id=CAST(:board AS UUID)
+                       AND is_archived=false
+                     FOR UPDATE",
+                    {lane=arguments.laneId,board=arguments.boardId},
+                    {returntype="array"}
+                );
+                if(!lanes.len()){
+                    outcome={success=false,code="not_found",boardId=arguments.boardId};
+                } else {
+                    var laneCount=queryExecute(
+                        "SELECT COUNT(*) total FROM board_column
+                         WHERE board_id=CAST(:board AS UUID) AND is_archived=false",
+                        {board=arguments.boardId},{returntype="array"}
+                    )[1].total;
+                    var visibleReplacementCount=queryExecute(
+                        "SELECT COUNT(*) total FROM board_column
+                         WHERE board_id=CAST(:board AS UUID)
+                           AND id<>CAST(:lane AS UUID)
+                           AND is_archived=false
+                           AND is_hidden_from_members=false",
+                        {board=arguments.boardId,lane=arguments.laneId},
+                        {returntype="array"}
+                    )[1].total;
+                    var cardCount=queryExecute(
+                        "SELECT COUNT(*) total FROM card
+                         WHERE column_id=CAST(:lane AS UUID) AND archived_at IS NULL",
+                        {lane=arguments.laneId},{returntype="array"}
+                    )[1].total;
+                    if(laneCount<=1){
+                        outcome={success=false,code="last_lane",boardId=arguments.boardId};
+                    } else if(lanes[1].is_completion_lane && !visibleReplacementCount){
+                        outcome={success=false,code="completion_lane_required",boardId=arguments.boardId};
+                    } else if(cardCount>0){
+                        outcome={success=false,code="lane_not_empty",boardId=arguments.boardId};
+                    } else {
+                        queryExecute(
+                            "UPDATE board_column
+                             SET is_archived=true,is_completion_lane=false,updated_at=now()
+                             WHERE id=CAST(:lane AS UUID)",
+                            {lane=arguments.laneId}
+                        );
+                        if(lanes[1].is_completion_lane){
+                            queryExecute(
+                                "UPDATE board_column replacement
+                                 SET is_completion_lane=true,updated_at=now()
+                                 WHERE replacement.id=(
+                                     SELECT candidate.id
+                                     FROM board_column candidate
+                                     WHERE candidate.board_id=CAST(:board AS UUID)
+                                       AND candidate.is_archived=false
+                                       AND candidate.is_hidden_from_members=false
+                                     ORDER BY candidate.position DESC,candidate.created_at DESC,candidate.id DESC
+                                     LIMIT 1
+                                 )",
+                                {board=arguments.boardId}
+                            );
+                            queryExecute(
+                                "UPDATE card card_record
+                                 SET completed_at=COALESCE(card_record.completed_at,card_record.updated_at,now()),
+                                     started_at=COALESCE(card_record.started_at,card_record.created_at),
+                                     version=card_record.version+1,
+                                     updated_at=clock_timestamp()
+                                 FROM board_column completion_lane
+                                 WHERE completion_lane.board_id=CAST(:board AS UUID)
+                                   AND completion_lane.is_archived=false
+                                   AND completion_lane.is_completion_lane=true
+                                   AND card_record.board_id=completion_lane.board_id
+                                   AND card_record.column_id=completion_lane.id
+                                   AND card_record.archived_at IS NULL
+                                   AND card_record.completed_at IS NULL",
+                                {board=arguments.boardId}
+                            );
+                        }
+                        outcome={success=true,boardId=arguments.boardId};
+                    }
+                }
+            }
+        }
+        return outcome;
     }
 
     struct function moveLane(
@@ -306,25 +430,73 @@ component singleton {
         required string laneId,
         required string direction
     ){
-        var access=laneAccess(arguments.userId,arguments.workspaceId,arguments.boardId,arguments.laneId);
-        if(!canManage(access) || access.is_archived) return {success=false,code="forbidden"};
-        var lanes=queryExecute(
-            "SELECT CAST(id AS TEXT) id,position FROM board_column
-             WHERE board_id=CAST(:board AS UUID) AND is_archived=false ORDER BY position",
-            {board=arguments.boardId},{returntype="array"}
-        );
-        var currentIndex=0;
-        for(var i=1;i<=lanes.len();i++) if(lanes[i].id==arguments.laneId){currentIndex=i;break;}
-        var targetIndex=lCase(arguments.direction)=="up"?currentIndex-1:currentIndex+1;
-        if(!currentIndex || targetIndex<1 || targetIndex>lanes.len()) return {success=false,code="invalid"};
+        var outcome={success=false,code="forbidden",boardId=arguments.boardId};
         transaction {
-            queryExecute("UPDATE board_column SET position=-1 WHERE id=CAST(:id AS UUID)",{id=lanes[currentIndex].id});
-            queryExecute("UPDATE board_column SET position=CAST(:position AS NUMERIC) WHERE id=CAST(:id AS UUID)",
-                {position=lanes[currentIndex].position,id=lanes[targetIndex].id});
-            queryExecute("UPDATE board_column SET position=CAST(:position AS NUMERIC),updated_at=now() WHERE id=CAST(:id AS UUID)",
-                {position=lanes[targetIndex].position,id=lanes[currentIndex].id});
+            var access=lockBoardForLaneManagement(
+                arguments.userId,arguments.workspaceId,arguments.boardId
+            );
+            if(canManage(access) && !access.is_archived){
+                var lanes=queryExecute(
+                    "SELECT CAST(id AS TEXT) id,position FROM board_column
+                     WHERE board_id=CAST(:board AS UUID) AND is_archived=false
+                     ORDER BY position,created_at,id
+                     FOR UPDATE",
+                    {board=arguments.boardId},{returntype="array"}
+                );
+                var currentIndex=0;
+                for(var i=1;i<=lanes.len();i++){
+                    if(lanes[i].id==arguments.laneId){currentIndex=i;break;}
+                }
+                var cleanDirection=lCase(trim(arguments.direction));
+                var targetIndex=cleanDirection=="up"?currentIndex-1:currentIndex+1;
+                if(!listFindNoCase("up,down",cleanDirection) || !currentIndex || targetIndex<1 || targetIndex>lanes.len()){
+                    outcome={success=false,code="invalid",boardId=arguments.boardId};
+                } else {
+                    queryExecute(
+                        "UPDATE board_column SET position=-1,updated_at=now()
+                         WHERE id=CAST(:id AS UUID)",
+                        {id=lanes[currentIndex].id}
+                    );
+                    queryExecute(
+                        "UPDATE board_column SET position=CAST(:position AS NUMERIC),updated_at=now()
+                         WHERE id=CAST(:id AS UUID)",
+                        {position=lanes[currentIndex].position,id=lanes[targetIndex].id}
+                    );
+                    queryExecute(
+                        "UPDATE board_column SET position=CAST(:position AS NUMERIC),updated_at=now()
+                         WHERE id=CAST(:id AS UUID)",
+                        {position=lanes[targetIndex].position,id=lanes[currentIndex].id}
+                    );
+                    outcome={success=true,boardId=arguments.boardId};
+                }
+            }
         }
-        return {success=true,boardId=arguments.boardId};
+        return outcome;
+    }
+
+    private struct function lockBoardForLaneManagement(
+        required string userId,
+        required string workspaceId,
+        required string boardId
+    ){
+        if(!trim(arguments.boardId).len()) return {found=false};
+        var rows=queryExecute(
+            "SELECT membership.role,workspace_record.plan,board_record.is_archived
+             FROM board board_record
+             JOIN workspace workspace_record ON workspace_record.id=board_record.workspace_id
+             JOIN workspace_member membership
+               ON membership.workspace_id=workspace_record.id
+              AND membership.user_id=CAST(:user AS UUID)
+             WHERE board_record.id=CAST(:board AS UUID)
+               AND workspace_record.id=CAST(:workspace AS UUID)
+             FOR UPDATE OF board_record
+             FOR SHARE OF membership",
+            {user=arguments.userId,board=arguments.boardId,workspace=arguments.workspaceId},
+            {returntype="array"}
+        );
+        return rows.len()?{
+            found=true,role=rows[1].role,plan=rows[1].plan,is_archived=rows[1].is_archived
+        }:{found=false};
     }
 
     private struct function workspaceAccess(required string userId,required string workspaceId){
@@ -348,18 +520,6 @@ component singleton {
              JOIN workspace_member wm ON wm.workspace_id=w.id
              WHERE b.id=CAST(:board AS UUID) AND w.id=CAST(:workspace AS UUID) AND wm.user_id=CAST(:user AS UUID)",
             {board=arguments.boardId,workspace=arguments.workspaceId,user=arguments.userId},{returntype="array"}
-        );
-        return rows.len()?{found=true,role=rows[1].role,plan=rows[1].plan,is_archived=rows[1].is_archived}:{found=false};
-    }
-
-    private struct function laneAccess(required string userId,required string workspaceId,required string boardId,required string laneId){
-        if(!trim(arguments.boardId).len() || !trim(arguments.laneId).len()) return {found=false};
-        var rows=queryExecute(
-            "SELECT wm.role,w.plan,b.is_archived FROM board_column bc JOIN board b ON b.id=bc.board_id
-             JOIN workspace w ON w.id=b.workspace_id JOIN workspace_member wm ON wm.workspace_id=w.id
-             WHERE bc.id=CAST(:lane AS UUID) AND bc.is_archived=false AND b.id=CAST(:board AS UUID)
-               AND w.id=CAST(:workspace AS UUID) AND wm.user_id=CAST(:user AS UUID)",
-            {lane=arguments.laneId,board=arguments.boardId,workspace=arguments.workspaceId,user=arguments.userId},{returntype="array"}
         );
         return rows.len()?{found=true,role=rows[1].role,plan=rows[1].plan,is_archived=rows[1].is_archived}:{found=false};
     }

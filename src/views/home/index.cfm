@@ -78,7 +78,7 @@
                             <h3>#$r( "board.card2" )#</h3>
                             <div class="card-meta"><span><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##clock"></use></svg> 18 Sep</span><i class="avatar avatar-b">JL</i></div>
                         </div>
-                        <button class="add-card" type="button"><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##plus"></use></svg> Add card</button>
+                        <button class="add-card" type="button"><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##plus"></use></svg> #$r( "app.card.addInLane" )#</button>
                     </article>
 
                     <article class="kanban-column">
@@ -94,7 +94,7 @@
                             <h3>#$r( "board.card4" )#</h3>
                             <div class="card-meta"><span><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##list-checks"></use></svg> 4 &nbsp; <svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##paperclip"></use></svg> 5</span><i class="avatar avatar-a">MA</i></div>
                         </div>
-                        <button class="add-card" type="button"><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##plus"></use></svg> Add card</button>
+                        <button class="add-card" type="button"><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##plus"></use></svg> #$r( "app.card.addInLane" )#</button>
                     </article>
 
                     <article class="kanban-column">
@@ -104,7 +104,7 @@
                             <h3>#$r( "board.card5" )#</h3>
                             <div class="card-meta"><span><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##list-checks"></use></svg> 7/8</span><span class="tiny-avatars"><i class="avatar avatar-b">JL</i><i class="avatar avatar-c">RK</i></span></div>
                         </div>
-                        <button class="add-card" type="button"><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##plus"></use></svg> Add card</button>
+                        <button class="add-card" type="button"><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##plus"></use></svg> #$r( "app.card.addInLane" )#</button>
                     </article>
 
                     <article class="kanban-column">
@@ -116,7 +116,7 @@
                                 <div class="card-meta"><span>12 Sep</span><i class="avatar avatar-b">JL</i></div>
                             </div>
                         </div>
-                        <button class="add-card" type="button"><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##plus"></use></svg> Add card</button>
+                        <button class="add-card" type="button"><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##plus"></use></svg> #$r( "app.card.addInLane" )#</button>
                     </article>
                 </div>
             </div>
@@ -190,7 +190,7 @@
                     <h3>#$r( "features.policy.title" )#</h3>
                     <p>#$r( "features.policy.body" )#</p>
                     <div class="wip-panel">
-                        <div class="wip-top"><strong>In progress</strong><span>2 / 3</span></div>
+                        <div class="wip-top"><strong>#$r( "features.policy.lane" )#</strong><span>2 / 3</span></div>
                         <div class="wip-progress"><i></i></div>
                         <div class="mini-cards"><span></span><span></span><span class="empty"></span></div>
                     </div>

@@ -10,6 +10,7 @@ component {
 
     this.allowedMethods = {
         index = "GET",
+        boardRevision = "GET",
         createCard = "POST",
         moveCard = "POST",
         updateLaneLayout = "POST",
@@ -24,6 +25,15 @@ component {
     function preHandler( event, rc, prc, action, eventArguments ) {
         if ( !structKeyExists( session, "auth" ) ) {
             relocate( uri = "/login" );
+        }
+        // Revision polling is read-only and revalidates workspace membership in
+        // BoardService. Avoid the full workspace/session refresh on every tick.
+        if ( arguments.action == "boardRevision" ) {
+            if ( !( session.auth.emailVerified ?: false ) ) {
+                relocate( uri = "/check-email" );
+            }
+            prc.auth = session.auth;
+            return;
         }
         session.auth.emailVerified = authService.isEmailVerified( session.auth.id );
         if ( !session.auth.emailVerified ) {
@@ -98,7 +108,36 @@ component {
         );
         prc.cardCsrfToken = csrfGenerateToken( "card-write" );
         prc.logoutCsrfToken = csrfGenerateToken( "logout" );
+        prc.boardError = listFindNoCase( "wip_limit,invalid", rc.error ?: "" )
+            ? lCase( rc.error )
+            : "";
         workspaceViewService.render( event, prc, "app/index" );
+    }
+
+    function boardRevision( event, rc, prc ) {
+        var result = boardService.getBoardRevision(
+            prc.auth.id,
+            prc.auth.workspaceId,
+            rc.boardId ?: ""
+        );
+        event.setHTTPHeader( name="Cache-Control", value="private, no-cache, must-revalidate" );
+        event.setHTTPHeader( name="Vary", value="Cookie" );
+        if ( !result.found ) {
+            event.renderData( type="json", data={ found=false }, statusCode=404 );
+            return;
+        }
+
+        var etag = '"board-' & lCase( rc.boardId ) & '-' & result.revision & '"';
+        event.setHTTPHeader( name="ETag", value=etag );
+        if ( trim( cgi.http_if_none_match ?: "" ) == etag ) {
+            event.renderData( type="json", data={}, statusCode=304 );
+            return;
+        }
+        event.renderData(
+            type="json",
+            data={ found=true,revision=result.revision },
+            statusCode=200
+        );
     }
 
     function createCard( event, rc, prc ) {
@@ -114,6 +153,11 @@ component {
                 description = rc.description ?: ""
             );
             if(result.success) relocate(uri="/app?boardId=#urlEncodedFormat(result.boardId)#");
+            if ( ( result.boardId ?: "" ).len() ) {
+                relocate(
+                    uri="/app?boardId=#urlEncodedFormat(result.boardId)#&error=#urlEncodedFormat(result.code ?: 'invalid')#"
+                );
+            }
         }
         relocate( uri = "/app" );
     }
@@ -221,6 +265,9 @@ component {
         responseData[ "success" ] = result.success;
         if ( structKeyExists( result, "code" ) ) {
             responseData[ "code" ] = result.code;
+        }
+        if ( structKeyExists( result, "revision" ) ) {
+            responseData[ "revision" ] = result.revision;
         }
         event.renderData(
             type = "json",

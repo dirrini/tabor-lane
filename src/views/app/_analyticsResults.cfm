@@ -120,7 +120,7 @@
 		{ key="invalidLeadTime",label="analytics.dataQuality.invalidLeadTime" },
 		{ key="invalidCycleTime",label="analytics.dataQuality.invalidCycleTime" }
 	];
-	knownWarnings = "completion_uses_last_visible_lane,cycle_time_starts_on_first_lane_change,historical_throughput_uses_latest_completion,completed_cards_missing_started_at,assignee_filter_uses_current_assignment";
+	knownWarnings = "completion_uses_designated_lane,cycle_time_starts_on_first_lane_change,historical_throughput_uses_latest_completion,completed_cards_missing_started_at,assignee_filter_uses_current_assignment";
 </cfscript>
 <cfoutput>
 <section id="analytics-results" class="analytics-results" aria-live="polite" aria-busy="false">

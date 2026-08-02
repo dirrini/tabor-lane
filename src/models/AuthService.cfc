@@ -632,13 +632,15 @@ component singleton {
 		);
 		for ( var index = 1; index <= columnIds.len(); index++ ) {
 			queryExecute(
-				"INSERT INTO board_column (id, board_id, name, position, wip_limit)
-				 VALUES (CAST(:id AS UUID), CAST(:boardId AS UUID), :name, CAST(:position AS NUMERIC), :wipLimit)",
+				"INSERT INTO board_column (id, board_id, name, position, wip_limit, is_completion_lane)
+				 VALUES (CAST(:id AS UUID), CAST(:boardId AS UUID), :name, CAST(:position AS NUMERIC),
+				         :wipLimit, CAST(:isCompletion AS BOOLEAN))",
 				{
 					id = columnIds[ index ],
 					boardId = boardId,
 					name = columnNames[ index ],
 					position = index,
+					isCompletion = index == columnIds.len(),
 					wipLimit = {
 						value = index == 3 ? 3 : "",
 						null = index != 3,

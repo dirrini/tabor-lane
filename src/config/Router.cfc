@@ -36,6 +36,7 @@ component {
         post( "/app/members/invite" ).to( "App.inviteMember" );
         route( "/app/members" ).to( "App.members" );
         get( "/app/boards/manage" ).to( "Boards.index" );
+        get( "/app/boards/:boardId/revision" ).to( "App.boardRevision" );
         post( "/app/boards/:boardId/lanes/:laneId/move" ).to( "Boards.moveLane" );
         post( "/app/boards/:boardId/lanes/:laneId/delete" ).to( "Boards.deleteLane" );
         post( "/app/boards/:boardId/lanes/:laneId/update" ).to( "Boards.updateLane" );

@@ -12,7 +12,9 @@ accounts join the existing workspace with their assigned role. Authenticated
 users can manage multiple boards and lanes, create complete cards and move them
 through workflows with changes persisted in PostgreSQL. Domain changes are
 published through a transactional outbox and delivered to the in-app
-notification center without coupling card writes to external services.
+notification center without coupling card writes to external services. Premium
+workspace owners and admins can create lane-entry automations that notify a
+selected member when a card reaches a configured lane.
 
 ## Technology
 
@@ -165,13 +167,26 @@ returning any card data. Set `OUTBOX_PROCESSING_ENABLED=false` on an application
 instance only when another instance is responsible for processing the shared
 outbox.
 
+## Automations
+
+The first automation trigger is `card moved to lane` and its action is `notify
+workspace member`. Rules are evaluated by the claimed outbox worker before the
+domain event is delivered, so the movement and its automated notification share
+the same retry and idempotency guarantees. Executions are recorded once per
+rule and event.
+
+Workspace members can view rules that do not expose hidden lanes. Only owners
+and admins can manage them. Creating or enabling rules requires Premium;
+disabling and removing existing rules remains available after a downgrade. A
+workspace can keep up to 50 rules.
+
 ## Delivery
 
 `ci.yml` validates translations, builds the application, starts the complete
 stack and checks application, PostgreSQL and MinIO health. Its functional smoke
 test also covers account lifecycle, cards, attachments, members, boards, lanes,
-plan limits, archiving, WIP enforcement, the transactional outbox and the
-notification center.
+plan limits, archiving, WIP enforcement, lane-entry automations, the
+transactional outbox and the notification center.
 
 `deploy-oci.yml` builds an immutable `amd64`/`arm64` image, publishes it to
 GHCR and deploys it to an OCI VM. The VM must already contain Docker, a GHCR

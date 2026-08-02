@@ -1,5 +1,7 @@
 component singleton {
 
+	property name="automationService" inject="AutomationService";
+
 	variables.environment = server.system.environment;
 
 	struct function processBatch( numeric batchSize = 0 ){
@@ -84,12 +86,19 @@ component singleton {
 		result[ "retried" ] = 0;
 		result[ "failed" ] = 0;
 		result[ "notificationsCreated" ] = 0;
+		result[ "automationExecutions" ] = 0;
 
 		for ( var claimedEvent in claimedRows ) {
 			try {
 				var notificationRows = [];
 				var processedRows = [];
+				var automationExecutions = 0;
 				transaction {
+					var automationResult = automationService.expandRecipientsForClaimedEvent(
+						eventId=claimedEvent.id,
+						workerId=workerId
+					);
+					automationExecutions = val( automationResult.matched ?: 0 );
 					notificationRows = queryExecute(
 						"INSERT INTO app_notification(
 						     event_id,workspace_id,user_id,notification_type,actor_id,
@@ -170,6 +179,8 @@ component singleton {
 				result[ "processed" ] = result[ "processed" ] + 1;
 				result[ "notificationsCreated" ] =
 					result[ "notificationsCreated" ] + notificationRows.len();
+				result[ "automationExecutions" ] =
+					result[ "automationExecutions" ] + automationExecutions;
 			} catch ( any exception ) {
 				var failureRows = recordFailure(
 					claimedEvent.id,

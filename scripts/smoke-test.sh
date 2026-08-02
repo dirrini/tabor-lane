@@ -31,7 +31,9 @@ notifications_html="$(mktemp)"
 notification_partial_html="$(mktemp)"
 notification_write_html="$(mktemp)"
 notification_badge_html="$(mktemp)"
-trap 'rm -f "$cookie_jar" "$signup_html" "$app_html" "$check_email_html" "$members_html" "$billing_html" "$profile_html" "$card_html" "$partial_html" "$history_restore_html" "$invitation_html" "$member_cookie_jar" "$member_signup_html" "$attachment_payload" "$attachment_download" "$avatar_payload" "$avatar_before" "$avatar_after" "$boards_html" "$my_work_html" "$analytics_html" "$analytics_results_html" "$analytics_json" "$analytics_headers" "$notifications_html" "$notification_partial_html" "$notification_write_html" "$notification_badge_html"' EXIT
+automations_html="$(mktemp)"
+automation_panel_html="$(mktemp)"
+trap 'rm -f "$cookie_jar" "$signup_html" "$app_html" "$check_email_html" "$members_html" "$billing_html" "$profile_html" "$card_html" "$partial_html" "$history_restore_html" "$invitation_html" "$member_cookie_jar" "$member_signup_html" "$attachment_payload" "$attachment_download" "$avatar_payload" "$avatar_before" "$avatar_after" "$boards_html" "$my_work_html" "$analytics_html" "$analytics_results_html" "$analytics_json" "$analytics_headers" "$notifications_html" "$notification_partial_html" "$notification_write_html" "$notification_badge_html" "$automations_html" "$automation_panel_html"' EXIT
 
 assert_analytics_open_cards() {
   node -e '
@@ -144,6 +146,19 @@ grep --quiet 'id="analytics-results"' "$analytics_html"
 grep --quiet 'class="analytics-panel-empty"' "$analytics_html"
 grep --quiet 'class="analytics-no-samples"' "$analytics_html"
 
+curl --fail --silent --show-error --cookie "$cookie_jar" \
+  "$base_url/app/automations" > "$automations_html"
+grep --quiet '<!doctype html>' "$automations_html"
+grep --quiet 'class="workspace-sidebar"' "$automations_html"
+grep --quiet 'data-workspace-page="automations"' "$automations_html"
+grep --quiet 'href="/app/automations" class="active" aria-current="page"' "$automations_html"
+grep --quiet 'id="automation-panel"' "$automations_html"
+grep --quiet 'Automations are a Premium feature' "$automations_html"
+if grep --quiet 'class="management-panel automation-builder"' "$automations_html"; then
+  echo "Free workspace unexpectedly displayed the automation builder" >&2
+  exit 1
+fi
+
 analytics_aging_path="$(
   sed -n 's/.*href="\([^"]*returnTo=analytics[^"]*\)".*/\1/p' "$analytics_html" | head -1
 )"
@@ -157,7 +172,7 @@ grep --quiet 'name="returnTo" value="analytics"' "$card_html"
 grep --quiet 'name="returnFromDate" value="' "$card_html"
 grep --quiet 'name="returnToDate" value="' "$card_html"
 
-for partial_path in app app/my-work app/members app/profile app/billing app/boards/manage app/analytics app/notifications; do
+for partial_path in app app/my-work app/members app/profile app/billing app/boards/manage app/analytics app/automations app/notifications; do
   curl --fail --silent --show-error --cookie "$cookie_jar" \
     --header "HX-Request: true" "$base_url/$partial_path" > "$partial_html"
   grep --quiet 'id="workspace-main"' "$partial_html"
@@ -181,6 +196,18 @@ grep --quiet 'id="analytics-results"' "$analytics_html"
 if grep --quiet '<!doctype html>' "$analytics_html" \
   || grep --quiet 'class="workspace-sidebar"' "$analytics_html"; then
   echo "Analytics HTMX navigation unexpectedly included the workspace shell" >&2
+  exit 1
+fi
+
+curl --fail --silent --show-error --cookie "$cookie_jar" \
+  --header "HX-Request: true" \
+  --header "HX-Target: automation-panel" \
+  "$base_url/app/automations" > "$automation_panel_html"
+test "$(grep --count 'id="automation-panel"' "$automation_panel_html")" = "1"
+if grep --quiet 'id="workspace-main"' "$automation_panel_html" \
+  || grep --quiet '<!doctype html>' "$automation_panel_html" \
+  || grep --quiet 'class="workspace-sidebar"' "$automation_panel_html"; then
+  echo "Automation panel request unexpectedly included content outside its partial" >&2
   exit 1
 fi
 
@@ -224,6 +251,16 @@ grep --quiet '<!doctype html>' "$history_restore_html"
 grep --quiet 'class="workspace-sidebar"' "$history_restore_html"
 grep --quiet 'data-workspace-page="analytics"' "$history_restore_html"
 grep --quiet 'id="analytics-results"' "$history_restore_html"
+
+curl --fail --silent --show-error --cookie "$cookie_jar" \
+  --header "HX-Request: true" \
+  --header "HX-Target: automation-panel" \
+  --header "HX-History-Restore-Request: true" \
+  "$base_url/app/automations" > "$history_restore_html"
+grep --quiet '<!doctype html>' "$history_restore_html"
+grep --quiet 'class="workspace-sidebar"' "$history_restore_html"
+grep --quiet 'data-workspace-page="automations"' "$history_restore_html"
+grep --quiet 'id="automation-panel"' "$history_restore_html"
 
 invalid_analytics_page_status="$(
   curl --silent --show-error --get \
@@ -1865,6 +1902,188 @@ fi
 if command -v docker > /dev/null 2>&1 \
   && smoke_db_user="$(docker compose exec -T postgres printenv POSTGRES_USER 2> /dev/null | tr -d '\r')" \
   && smoke_db_name="$(docker compose exec -T postgres printenv POSTGRES_DB 2> /dev/null | tr -d '\r')"; then
+  printf '%s\n' \
+    "UPDATE workspace" \
+    "   SET plan='premium',updated_at=now()" \
+    " WHERE id=(" \
+    "   SELECT workspace_id FROM board WHERE id=CAST(:'board_id' AS UUID)" \
+    " );" \
+    | docker compose exec -T postgres psql \
+      --username "$smoke_db_user" \
+      --dbname "$smoke_db_name" \
+      --set ON_ERROR_STOP=1 \
+      --set board_id="$managed_board_id" \
+      --file=- > /dev/null
+
+  curl --fail --silent --show-error --cookie "$cookie_jar" \
+    "$base_url/app/automations" > "$automations_html"
+  grep --quiet 'class="management-panel automation-builder"' "$automations_html"
+  grep --quiet 'name="destination"' "$automations_html"
+  grep --quiet 'name="recipientUserId"' "$automations_html"
+  automation_csrf="$(
+    sed -n '/action="\/app\/automations"/,/<\/form>/ s/.*name="csrfToken" value="\([^"]*\)".*/\1/p' \
+      "$automations_html" | head -1
+  )"
+  test -n "$automation_csrf"
+
+  curl --fail --silent --show-error --location \
+    --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+    --header "HX-Request: true" \
+    --header "HX-Target: automation-panel" \
+    --data-urlencode "csrfToken=$automation_csrf" \
+    --data-urlencode "name=CI review handoff notification" \
+    --data-urlencode "destination=$managed_board_id:$notification_move_lane_id" \
+    --data-urlencode "recipientUserId=$member_user_id" \
+    "$base_url/app/automations" > "$automation_panel_html"
+  test "$(grep --count 'id="automation-panel"' "$automation_panel_html")" = "1"
+  grep --quiet "Automation created" "$automation_panel_html"
+  grep --quiet "CI review handoff notification" "$automation_panel_html"
+  if grep --quiet 'id="workspace-main"' "$automation_panel_html" \
+    || grep --quiet '<!doctype html>' "$automation_panel_html" \
+    || grep --quiet 'class="workspace-sidebar"' "$automation_panel_html"; then
+    echo "Automation creation unexpectedly returned content outside its partial" >&2
+    exit 1
+  fi
+  automation_rule_id="$(
+    sed -n '/data-automation-name="CI&#x20;review&#x20;handoff&#x20;notification"/ s/.*data-automation-id="\([^"]*\)".*/\1/p' \
+      "$automation_panel_html" | head -1
+  )"
+  test -n "$automation_rule_id"
+
+  automation_card_title="CI automation notification card"
+  automation_card_create_status="$(
+    curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+      --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+      --request POST "$base_url/app/cards" \
+      --data-urlencode "csrfToken=$notification_card_csrf" \
+      --data-urlencode "columnId=$target_lane_id" \
+      --data-urlencode "title=$automation_card_title" \
+      --data-urlencode "description=Unassigned card used to verify lane notification automation"
+  )"
+  test "$automation_card_create_status" = "302"
+  curl --fail --silent --show-error --cookie "$cookie_jar" \
+    "$base_url/app?boardId=$managed_board_id" > "$app_html"
+  automation_card_id="$(
+    sed -n '/data-card-title="CI&#x20;automation&#x20;notification&#x20;card"/ s/.*data-card-id="\([^"]*\)".*/\1/p' \
+      "$app_html" | head -1
+  )"
+  test -n "$automation_card_id"
+
+  automation_move_response="$(
+    curl --fail --silent --show-error \
+      --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+      --request POST "$base_url/app/cards/$automation_card_id/move" \
+      --data-urlencode "csrfToken=$notification_card_csrf" \
+      --data-urlencode "columnId=$notification_move_lane_id"
+  )"
+  printf '%s' "$automation_move_response" | grep --quiet '"success":true'
+  wait_for_notification_center \
+    "$member_cookie_jar" \
+    "/app/notifications?filter=all&page=1" \
+    "$notifications_html" \
+    "$automation_card_title"
+  grep --quiet 'icon-card_moved' "$notifications_html"
+
+  automation_execution_state="$(
+    printf '%s\n' \
+      "SELECT COUNT(execution.id),COUNT(notification.id)" \
+      "FROM automation_execution execution" \
+      "JOIN outbox_event event_record ON event_record.id=execution.event_id" \
+      "LEFT JOIN app_notification notification" \
+      "  ON notification.event_id=execution.event_id" \
+      " AND notification.user_id=execution.recipient_user_id" \
+      "WHERE execution.automation_rule_id=CAST(:'rule_id' AS UUID)" \
+      "  AND event_record.aggregate_id=CAST(:'card_id' AS UUID);" \
+      | docker compose exec -T postgres psql \
+        --username "$smoke_db_user" \
+        --dbname "$smoke_db_name" \
+        --set ON_ERROR_STOP=1 \
+        --set rule_id="$automation_rule_id" \
+        --set card_id="$automation_card_id" \
+        --quiet --tuples-only --no-align --field-separator='|' \
+        --file=- \
+      | tr -d '\r[:space:]'
+  )"
+  test "$automation_execution_state" = "1|1"
+
+  curl --fail --silent --show-error --cookie "$cookie_jar" \
+    "$base_url/app/automations" > "$automations_html"
+  grep --quiet '1 execution' "$automations_html"
+  automation_csrf="$(
+    grep -A 45 "data-automation-id=\"$automation_rule_id\"" "$automations_html" \
+      | sed -n 's/.*name="csrfToken" value="\([^"]*\)".*/\1/p' | head -1
+  )"
+  test -n "$automation_csrf"
+  curl --fail --silent --show-error --location \
+    --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+    --header "HX-Request: true" \
+    --header "HX-Target: automation-panel" \
+    --data-urlencode "csrfToken=$automation_csrf" \
+    --data-urlencode "enabled=false" \
+    "$base_url/app/automations/$automation_rule_id/toggle" > "$automation_panel_html"
+  grep --quiet "Automation paused" "$automation_panel_html"
+  grep 'data-automation-id="'"$automation_rule_id"'"' "$automation_panel_html" \
+    | grep --quiet 'automation-rule is-paused'
+
+  paused_card_title="CI paused automation card"
+  paused_card_create_status="$(
+    curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+      --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+      --request POST "$base_url/app/cards" \
+      --data-urlencode "csrfToken=$notification_card_csrf" \
+      --data-urlencode "columnId=$target_lane_id" \
+      --data-urlencode "title=$paused_card_title"
+  )"
+  test "$paused_card_create_status" = "302"
+  curl --fail --silent --show-error --cookie "$cookie_jar" \
+    "$base_url/app?boardId=$managed_board_id" > "$app_html"
+  paused_card_id="$(
+    sed -n '/data-card-title="CI&#x20;paused&#x20;automation&#x20;card"/ s/.*data-card-id="\([^"]*\)".*/\1/p' \
+      "$app_html" | head -1
+  )"
+  test -n "$paused_card_id"
+  curl --fail --silent --show-error --output /dev/null \
+    --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+    --request POST "$base_url/app/cards/$paused_card_id/move" \
+    --data-urlencode "csrfToken=$notification_card_csrf" \
+    --data-urlencode "columnId=$notification_move_lane_id"
+
+  paused_event_processed="0"
+  for _ in $(seq 1 25); do
+    paused_event_processed="$(
+      printf '%s\n' \
+        "SELECT COUNT(*)" \
+        "FROM outbox_event" \
+        "WHERE aggregate_id=CAST(:'card_id' AS UUID)" \
+        "  AND event_type='card.moved'" \
+        "  AND processed_at IS NOT NULL;" \
+        | docker compose exec -T postgres psql \
+          --username "$smoke_db_user" \
+          --dbname "$smoke_db_name" \
+          --set ON_ERROR_STOP=1 \
+          --set card_id="$paused_card_id" \
+          --quiet --tuples-only --no-align --file=- \
+        | tr -d '\r[:space:]'
+    )"
+    [[ "$paused_event_processed" = "1" ]] && break
+    sleep 1
+  done
+  test "$paused_event_processed" = "1"
+  paused_execution_count="$(
+    printf '%s\n' \
+      "SELECT COUNT(*)" \
+      "FROM automation_execution" \
+      "WHERE automation_rule_id=CAST(:'rule_id' AS UUID);" \
+      | docker compose exec -T postgres psql \
+        --username "$smoke_db_user" \
+        --dbname "$smoke_db_name" \
+        --set ON_ERROR_STOP=1 \
+        --set rule_id="$automation_rule_id" \
+        --quiet --tuples-only --no-align --file=- \
+      | tr -d '\r[:space:]'
+  )"
+  test "$paused_execution_count" = "1"
+
   secondary_slug="ci-secondary-$(printf '%s' "$run_id" | tr -cd 'a-zA-Z0-9-' | cut -c1-70)"
   secondary_workspace_id="$(
     printf '%s\n' \
@@ -2041,6 +2260,11 @@ curl --fail --silent --show-error --cookie "$cookie_jar" \
 grep --quiet "Visão atual do fluxo" "$analytics_html"
 grep --quiet "Desempenho no período" "$analytics_html"
 grep --quiet "Qualidade e interpretação dos dados" "$analytics_html"
+curl --fail --silent --show-error --cookie "$cookie_jar" \
+  "$base_url/app/automations" > "$automations_html"
+grep --quiet "Regras de fluxo" "$automations_html"
+grep --quiet "Card entrar em" "$automations_html"
+grep --quiet "Notificar" "$automations_html"
 
 if command -v docker > /dev/null 2>&1 \
   && smoke_db_user="$(docker compose exec -T postgres printenv POSTGRES_USER 2> /dev/null | tr -d '\r')" \

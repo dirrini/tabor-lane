@@ -58,7 +58,7 @@
             </span>
         </a>
         <a href="/app/analytics" class="#prc.page == 'analytics' ? 'active' : ''#" #prc.page == 'analytics' ? 'aria-current="page"' : ''#><span><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##chart"></use></svg></span>#$r( "app.analytics" )#</a>
-        <a href="##"><span><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##bolt"></use></svg></span>#$r( "app.automations" )#</a>
+        <a href="/app/automations" class="#prc.page == 'automations' ? 'active' : ''#" #prc.page == 'automations' ? 'aria-current="page"' : ''#><span><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##bolt"></use></svg></span>#$r( "app.automations" )#</a>
         <a href="##"><span><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##settings"></use></svg></span>#$r( "app.settings" )#</a>
     </nav>
     <a class="workspace-account #prc.page == 'profile' || prc.page == 'billing' ? 'active' : ''#" href="/app/profile" hx-get="/app/profile" hx-target="##workspace-main" hx-select="##workspace-main" hx-swap="outerHTML show:top" hx-push-url="true" #prc.page == 'profile' || prc.page == 'billing' ? 'aria-current="page"' : ''#>

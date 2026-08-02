@@ -798,6 +798,7 @@
       members: "/app/members",
       notifications: "/app/notifications",
       analytics: "/app/analytics",
+      automations: "/app/automations",
     };
 
     workspaceShell.querySelectorAll(".workspace-sidebar nav a").forEach((link) => {

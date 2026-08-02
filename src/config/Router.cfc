@@ -23,6 +23,10 @@ component {
         get( "/app/notifications" ).to( "Notifications.index" );
         get( "/app/analytics/metrics" ).to( "Analytics.metrics" );
         get( "/app/analytics" ).to( "Analytics.index" );
+        post( "/app/automations/:ruleId/delete" ).to( "Automations.remove" );
+        post( "/app/automations/:ruleId/toggle" ).to( "Automations.toggle" );
+        post( "/app/automations" ).to( "Automations.create" );
+        get( "/app/automations" ).to( "Automations.index" );
         post( "/app/my-work/cards/:cardId" ).to( "MyWork.updateCard" );
         get( "/app/my-work" ).to( "MyWork.index" );
         post( "/app/members/invite" ).to( "App.inviteMember" );

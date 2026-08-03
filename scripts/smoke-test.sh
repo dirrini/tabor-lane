@@ -570,6 +570,8 @@ unchanged_revision_status="$(
 test "$unchanged_revision_status" = "304"
 
 grep --quiet 'data-board-realtime-enabled="false"' "$app_html"
+grep --quiet 'data-board-viewport' "$app_html"
+grep --quiet 'data-board-viewed-label' "$app_html"
 if grep --quiet 'data-board-realtime-status' "$app_html"; then
   echo "Free workspace unexpectedly displayed Premium live synchronization" >&2
   exit 1
@@ -630,6 +632,10 @@ test -n "$managed_card_id"
 curl --fail --silent --show-error --cookie "$cookie_jar" \
   "$base_url/app/cards/$managed_card_id" > "$card_html"
 grep --quiet "Card details" "$card_html"
+if grep --quiet 'data-board-viewport' "$card_html"; then
+  echo "Card details unexpectedly inherited the fixed-height board viewport" >&2
+  exit 1
+fi
 card_csrf_token="$(sed -n 's/.*data-card-csrf-token="\([^"]*\)".*/\1/p' "$card_html" | head -1)"
 owner_user_id="$(
   sed -n '/data-assignee-member-name="CI&#x20;Owner&#x20;Updated"/ s/.*data-assignee-member-id="\([^"]*\)".*/\1/p' \
@@ -1138,6 +1144,10 @@ test -n "$initial_board_id"
 curl --fail --silent --show-error --cookie "$cookie_jar" \
   "$base_url/app/boards/manage" > "$boards_html"
 grep --quiet "Boards and lanes" "$boards_html"
+if grep --quiet 'data-board-viewport' "$boards_html"; then
+  echo "Board management unexpectedly inherited the fixed-height board viewport" >&2
+  exit 1
+fi
 board_csrf_token="$(
   sed -n '/action="\/app\/boards"/,/<\/form>/ s/.*name="csrfToken" value="\([^"]*\)".*/\1/p' \
     "$boards_html" | head -1
@@ -2367,6 +2377,10 @@ if command -v docker > /dev/null 2>&1 \
   grep --quiet 'data-board-realtime-enabled="true"' "$app_html"
   grep --quiet 'data-board-realtime-status' "$app_html"
   grep --quiet 'data-board-events-url=' "$app_html"
+  if grep --quiet 'data-board-viewed-label' "$app_html"; then
+    echo "Premium realtime board unexpectedly displayed the last-viewed status" >&2
+    exit 1
+  fi
 
   : > "$board_events_stream"
   : > "$board_events_headers"

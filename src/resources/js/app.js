@@ -643,6 +643,12 @@
       }
       boardRefreshPending = true;
       const scrollLeft = workspace.querySelector(".workspace-board")?.scrollLeft || 0;
+      const laneScrollPositions = new Map(
+        [...workspace.querySelectorAll("[data-column-id]")].map((column) => [
+          column.dataset.columnId,
+          column.querySelector("[data-card-list]")?.scrollTop || 0,
+        ]),
+      );
       boardRefreshController?.abort();
       boardRefreshController = new AbortController();
       try {
@@ -685,6 +691,12 @@
         window.htmx?.process(replacement);
         initDynamicContent(replacement);
         replacement.querySelector(".workspace-board")?.scrollTo({ left: scrollLeft });
+        replacement.querySelectorAll("[data-column-id]").forEach((column) => {
+          const cardList = column.querySelector("[data-card-list]");
+          if (cardList && laneScrollPositions.has(column.dataset.columnId)) {
+            cardList.scrollTop = laneScrollPositions.get(column.dataset.columnId);
+          }
+        });
       } catch (error) {
         if (error.name !== "AbortError") scheduleBoardPoll(2500);
       } finally {

@@ -7,10 +7,11 @@ component singleton {
 	boolean function allow(
 		required string key,
 		required numeric limit,
-		required numeric windowSeconds
+		required numeric windowSeconds,
+		boolean failClosed = false
 	){
 		if ( !variables.restUrl.len() || !variables.restToken.len() ) {
-			return true;
+			return !arguments.failClosed;
 		}
 
 		try {
@@ -40,9 +41,9 @@ component singleton {
 			writeLog(
 				file = "application",
 				type = "warning",
-				text = "Rate limiter unavailable; allowing request: #exception.message#"
+				text = "Rate limiter unavailable; #arguments.failClosed ? 'denying' : 'allowing'# request: #exception.message#"
 			);
-			return true;
+			return !arguments.failClosed;
 		}
 	}
 

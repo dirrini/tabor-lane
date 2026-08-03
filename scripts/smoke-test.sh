@@ -39,7 +39,9 @@ integrations_html="$(mktemp)"
 api_json="$(mktemp)"
 api_aux_json="$(mktemp)"
 api_headers="$(mktemp)"
-trap 'rm -f "$cookie_jar" "$signup_html" "$app_html" "$check_email_html" "$members_html" "$billing_html" "$profile_html" "$card_html" "$partial_html" "$history_restore_html" "$invitation_html" "$member_cookie_jar" "$member_signup_html" "$attachment_payload" "$attachment_download" "$avatar_payload" "$avatar_before" "$avatar_after" "$boards_html" "$my_work_html" "$analytics_html" "$analytics_results_html" "$analytics_json" "$analytics_headers" "$board_revision_headers" "$notifications_html" "$notification_partial_html" "$notification_write_html" "$notification_badge_html" "$automations_html" "$automation_panel_html" "$settings_html" "$integrations_html" "$api_json" "$api_aux_json" "$api_headers"' EXIT
+board_events_stream="$(mktemp)"
+board_events_headers="$(mktemp)"
+trap 'rm -f "$cookie_jar" "$signup_html" "$app_html" "$check_email_html" "$members_html" "$billing_html" "$profile_html" "$card_html" "$partial_html" "$history_restore_html" "$invitation_html" "$member_cookie_jar" "$member_signup_html" "$attachment_payload" "$attachment_download" "$avatar_payload" "$avatar_before" "$avatar_after" "$boards_html" "$my_work_html" "$analytics_html" "$analytics_results_html" "$analytics_json" "$analytics_headers" "$board_revision_headers" "$notifications_html" "$notification_partial_html" "$notification_write_html" "$notification_badge_html" "$automations_html" "$automation_panel_html" "$settings_html" "$integrations_html" "$api_json" "$api_aux_json" "$api_headers" "$board_events_stream" "$board_events_headers"' EXIT
 
 assert_analytics_open_cards() {
   node -e '
@@ -558,7 +560,7 @@ revision_status="$(
 )"
 test "$revision_status" = "200"
 grep --quiet -E '"(revision|REVISION)"' "$partial_html"
-board_revision_etag="$(sed -n 's/^[Ee][Tt][Aa][Gg]:[[:space:]]*\(.*\)\r$/\1/p' "$board_revision_headers" | head -1)"
+board_revision_etag="$(tr -d '\r' < "$board_revision_headers" | sed -n 's/^[Ee][Tt][Aa][Gg]:[[:space:]]*//p' | head -1)"
 test -n "$board_revision_etag"
 unchanged_revision_status="$(
   curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
@@ -566,6 +568,27 @@ unchanged_revision_status="$(
     "$base_url/app/boards/$analytics_initial_board_id/revision"
 )"
 test "$unchanged_revision_status" = "304"
+
+grep --quiet 'data-board-realtime-enabled="false"' "$app_html"
+if grep --quiet 'data-board-realtime-status' "$app_html"; then
+  echo "Free workspace unexpectedly displayed Premium live synchronization" >&2
+  exit 1
+fi
+unauthenticated_events_status="$(
+  curl --silent --show-error --max-time 5 \
+    --output "$partial_html" --write-out '%{http_code}' \
+    "$base_url/app/boards/$analytics_initial_board_id/events"
+)"
+test "$unauthenticated_events_status" = "401"
+grep --quiet -E '"(code|CODE)"[[:space:]]*:[[:space:]]*"unauthorized"' "$partial_html"
+free_events_status="$(
+  curl --silent --show-error --max-time 5 \
+    --output "$partial_html" --write-out '%{http_code}' \
+    --cookie "$cookie_jar" \
+    "$base_url/app/boards/$analytics_initial_board_id/events"
+)"
+test "$free_events_status" = "403"
+grep --quiet -E '"(code|CODE)"[[:space:]]*:[[:space:]]*"plan_required"' "$partial_html"
 
 move_response="$(
   curl --fail --silent --show-error \
@@ -2336,8 +2359,79 @@ if command -v docker > /dev/null 2>&1 \
       --username "$smoke_db_user" \
       --dbname "$smoke_db_name" \
       --set ON_ERROR_STOP=1 \
+    --set board_id="$managed_board_id" \
+    --file=- > /dev/null
+
+  curl --fail --silent --show-error --cookie "$cookie_jar" \
+    "$base_url/app?boardId=$managed_board_id" > "$app_html"
+  grep --quiet 'data-board-realtime-enabled="true"' "$app_html"
+  grep --quiet 'data-board-realtime-status' "$app_html"
+  grep --quiet 'data-board-events-url=' "$app_html"
+
+  : > "$board_events_stream"
+  : > "$board_events_headers"
+  curl --silent --show-error --no-buffer --max-time 15 \
+    --dump-header "$board_events_headers" \
+    --cookie "$cookie_jar" \
+    "$base_url/app/boards/$managed_board_id/events" > "$board_events_stream" &
+  board_events_pid=$!
+  board_events_connected="false"
+  for _ in $(seq 1 32); do
+    if grep --quiet '^event: connected' "$board_events_stream"; then
+      board_events_connected="true"
+      break
+    fi
+    if ! kill -0 "$board_events_pid" 2> /dev/null; then break; fi
+    sleep 0.25
+  done
+  if [[ "$board_events_connected" != "true" ]]; then
+    kill "$board_events_pid" 2> /dev/null || true
+    wait "$board_events_pid" 2> /dev/null || true
+    echo "Premium board SSE did not flush its connected event" >&2
+    cat "$board_events_headers" >&2
+    exit 1
+  fi
+
+  printf '%s\n' \
+    "UPDATE board SET updated_at=clock_timestamp()" \
+    " WHERE id=CAST(:'board_id' AS UUID);" \
+    | docker compose exec -T postgres psql \
+      --username "$smoke_db_user" \
+      --dbname "$smoke_db_name" \
+      --set ON_ERROR_STOP=1 \
       --set board_id="$managed_board_id" \
       --file=- > /dev/null
+
+  board_events_updated="false"
+  for _ in $(seq 1 32); do
+    if grep --quiet '^event: board.updated' "$board_events_stream"; then
+      board_events_updated="true"
+      break
+    fi
+    if ! kill -0 "$board_events_pid" 2> /dev/null; then break; fi
+    sleep 0.25
+  done
+  kill "$board_events_pid" 2> /dev/null || true
+  wait "$board_events_pid" 2> /dev/null || true
+  if [[ "$board_events_updated" != "true" ]]; then
+    echo "Premium board SSE did not push board.updated after a revision change" >&2
+    cat "$board_events_stream" >&2
+    exit 1
+  fi
+  grep --ignore-case --quiet '^content-type: text/event-stream' "$board_events_headers"
+  grep --ignore-case --quiet '^x-accel-buffering: no' "$board_events_headers"
+  grep --ignore-case --quiet '^cache-control: .*no-transform' "$board_events_headers"
+  node -e '
+    const fs=require("fs");
+    const lines=fs.readFileSync(process.argv[1],"utf8").split(/\r?\n/);
+    const payloads=lines.filter((line)=>line.startsWith("data: ")).map((line)=>JSON.parse(line.slice(6)));
+    if(payloads.length<2) throw new Error("Expected connected and board.updated data frames");
+    for(const payload of payloads) {
+      const keys=Object.keys(payload);
+      if(keys.length!==1 || keys[0].toLowerCase()!=="revision") throw new Error("SSE exposed fields beyond revision");
+      if(!/^[0-9a-f]{32}$/i.test(payload[keys[0]])) throw new Error("SSE revision is not an opaque MD5 value");
+    }
+  ' "$board_events_stream"
 
   curl --fail --silent --show-error --cookie "$cookie_jar" \
     "$base_url/app/automations" > "$automations_html"

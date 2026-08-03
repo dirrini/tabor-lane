@@ -169,6 +169,7 @@ component singleton {
 		var rows = queryExecute(
 			"SELECT md5(concat_ws('|',
 			        CAST(board_record.updated_at AS TEXT),requester.role,
+			        workspace_record.name,workspace_record.plan,
 			        COALESCE((
 			            SELECT md5(COALESCE(string_agg(
 			                CAST(jsonb_build_array(
@@ -218,8 +219,9 @@ component singleton {
 			            WHERE assigned_card.board_id=board_record.id
 			              AND (assigned_lane.is_hidden_from_members=false OR requester.role IN ('owner','admin'))
 			        ),md5(''))
-			    )) AS revision
+			    )) AS revision,workspace_record.plan
 			 FROM board board_record
+			 JOIN workspace workspace_record ON workspace_record.id=board_record.workspace_id
 			 JOIN workspace_member requester
 			   ON requester.workspace_id=board_record.workspace_id
 			  AND requester.user_id=CAST(:userId AS UUID)
@@ -234,7 +236,7 @@ component singleton {
 			{ returntype="array" }
 		);
 		return rows.len()
-			? { found=true,revision=rows[ 1 ].revision }
+			? { found=true,revision=rows[ 1 ].revision,plan=rows[ 1 ].plan }
 			: { found=false };
 	}
 

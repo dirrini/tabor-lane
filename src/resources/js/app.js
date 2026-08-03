@@ -116,6 +116,9 @@
     const cardFormCancel = workspace.querySelector("[data-card-form-cancel]");
     const toast = workspace.querySelector("[data-board-toast]");
     const viewedLabel = workspace.querySelector("[data-board-viewed-label]");
+    const realtimeStatus = workspace.querySelector("[data-board-realtime-status]");
+    const realtimeLabel = workspace.querySelector("[data-board-realtime-label]");
+    const realtimeEnabled = workspace.dataset.boardRealtimeEnabled === "true";
     const viewedStartedAt = Date.now();
     let draggedCard = null;
     let dragOrigin = null;
@@ -125,6 +128,11 @@
     let boardRefreshController = null;
     let boardRefreshPending = false;
     let boardCleanedUp = false;
+    let pendingBoardWrites = 0;
+    let realtimeSource = null;
+    let realtimeRestartTimer = null;
+    let realtimeConnected = false;
+    let realtimeRetryDelay = 1000;
 
     const toggleCardForm = (open) => {
       if (!cardForm) return;
@@ -313,6 +321,7 @@
           columnId: column.dataset.columnId,
           beforeCardId: nextCard?.dataset.cardId || "",
         });
+        pendingBoardWrites += 1;
         try {
           const response = await fetch(`/app/cards/${encodeURIComponent(card.dataset.cardId)}/move`, {
             method: "POST",
@@ -331,13 +340,16 @@
             if (completedLabel) completedLabel.hidden = !completed;
           }
           const revision = result.revision ?? result.REVISION;
-          if (revision) workspace.dataset.boardRevision = revision;
+          if (revision) {
+            workspace.dataset.boardRevision = revision;
+          }
           updateColumnState();
           showToast(workspace.dataset.moveSuccess);
         } catch (error) {
           restoreDraggedCard();
           showToast(workspace.dataset.moveError);
         } finally {
+          pendingBoardWrites = Math.max(0, pendingBoardWrites - 1);
           card.classList.remove("dragging");
           dragOrigin = null;
           dropAttempted = false;
@@ -457,6 +469,7 @@
       const activeElement = document.activeElement;
       return Boolean(
         draggedCard
+        || pendingBoardWrites > 0
         || workspace.querySelector(".is-resizing")
         || workspace.querySelector("[data-card-form]:not([hidden])")
         || workspace.querySelector("[data-lane-card-form]:not([hidden])")
@@ -468,11 +481,155 @@
       );
     };
 
+    const setRealtimeState = (state) => {
+      if (!realtimeStatus || !realtimeLabel) return;
+      const labels = {
+        connecting: workspace.dataset.realtimeConnecting,
+        live: workspace.dataset.realtimeConnected,
+        reconnecting: workspace.dataset.realtimeReconnecting,
+      };
+      realtimeStatus.classList.remove("is-connecting", "is-live", "is-reconnecting");
+      realtimeStatus.classList.add(`is-${state}`);
+      realtimeStatus.dataset.realtimeState = state;
+      realtimeLabel.textContent = labels[state] || labels.connecting;
+    };
+
+    const stopRealtimeSync = () => {
+      window.clearTimeout(realtimeRestartTimer);
+      realtimeRestartTimer = null;
+      realtimeSource?.close();
+      realtimeSource = null;
+      realtimeConnected = false;
+    };
+
+    const realtimeEventsUrl = () => {
+      const url = new URL(workspace.dataset.boardEventsUrl, window.location.origin);
+      if (workspace.dataset.boardRevision) {
+        url.searchParams.set("revision", workspace.dataset.boardRevision);
+      }
+      return `${url.pathname}${url.search}`;
+    };
+
+    const retryRealtimeSync = (source = null, minimumDelay = 0) => {
+      if (source && realtimeSource !== source) return;
+      source?.close();
+      realtimeSource = null;
+      realtimeConnected = false;
+      setRealtimeState("reconnecting");
+      window.clearTimeout(realtimeRestartTimer);
+      const delay = Math.max(minimumDelay, realtimeRetryDelay)
+        + Math.floor(Math.random() * 500);
+      realtimeRetryDelay = Math.min(realtimeRetryDelay * 2, 30000);
+      if (
+        !boardCleanedUp
+        && workspace.isConnected
+        && document.visibilityState === "visible"
+        && navigator.onLine
+      ) {
+        realtimeRestartTimer = window.setTimeout(startRealtimeSync, delay);
+      }
+      scheduleBoardPoll(Math.min(delay, 2500));
+    };
+
+    const startRealtimeSync = () => {
+      if (
+        !realtimeEnabled
+        || boardCleanedUp
+        || !workspace.isConnected
+        || !workspace.dataset.boardEventsUrl
+        || document.visibilityState !== "visible"
+        || !navigator.onLine
+      ) return;
+      if (!("EventSource" in window)) {
+        setRealtimeState("reconnecting");
+        scheduleBoardPoll(2500);
+        return;
+      }
+
+      realtimeSource?.close();
+      realtimeSource = null;
+      realtimeConnected = false;
+      setRealtimeState("connecting");
+      let source;
+      try {
+        source = new EventSource(realtimeEventsUrl());
+      } catch (error) {
+        retryRealtimeSync();
+        return;
+      }
+      realtimeSource = source;
+
+      source.addEventListener("connected", (streamEvent) => {
+        if (realtimeSource !== source) return;
+        let serverRevision = "";
+        try {
+          const payload = JSON.parse(streamEvent.data || "{}");
+          serverRevision = payload.revision ?? payload.REVISION ?? "";
+        } catch (error) {
+          retryRealtimeSync(source, 500);
+          return;
+        }
+        if (
+          serverRevision
+          && workspace.dataset.boardRevision
+          && serverRevision !== workspace.dataset.boardRevision
+        ) {
+          source.close();
+          realtimeSource = null;
+          realtimeConnected = false;
+          refreshBoard();
+          return;
+        }
+        realtimeConnected = true;
+        realtimeRetryDelay = 1000;
+        setRealtimeState("live");
+        scheduleBoardPoll();
+      });
+
+      source.addEventListener("board.updated", (streamEvent) => {
+        if (realtimeSource !== source) return;
+        let revision = "";
+        try {
+          const payload = JSON.parse(streamEvent.data || "{}");
+          revision = payload.revision ?? payload.REVISION ?? "";
+        } catch (error) {
+          // The revision poll remains the source of truth for malformed events.
+        }
+        source.close();
+        realtimeSource = null;
+        realtimeConnected = false;
+        if (revision && revision === workspace.dataset.boardRevision) {
+          restartRealtimeSync(150);
+          return;
+        }
+        setRealtimeState("reconnecting");
+        refreshBoard();
+      });
+
+      source.addEventListener("reconnect", () => {
+        if (realtimeSource !== source) return;
+        restartRealtimeSync(250);
+      });
+
+      source.onerror = () => {
+        if (realtimeSource !== source || boardCleanedUp) return;
+        retryRealtimeSync(source);
+      };
+    };
+
+    const restartRealtimeSync = (delay = 0) => {
+      if (!realtimeEnabled || boardCleanedUp || !workspace.isConnected) return;
+      stopRealtimeSync();
+      setRealtimeState(delay ? "reconnecting" : "connecting");
+      realtimeRestartTimer = window.setTimeout(startRealtimeSync, delay);
+    };
+
     const cleanupBoardSync = () => {
       boardCleanedUp = true;
       window.clearTimeout(pollTimer);
       pollController?.abort();
       boardRefreshController?.abort();
+      stopRealtimeSync();
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       window.removeEventListener("online", handleOnline);
       document.body.removeEventListener("htmx:beforeRequest", handleWorkspaceHtmxRequest);
@@ -536,7 +693,13 @@
       }
     };
 
-    const scheduleBoardPoll = (delay = 10000 + Math.floor(Math.random() * 1500)) => {
+    const scheduleBoardPoll = (
+      delay = (
+        realtimeEnabled
+          ? (realtimeConnected ? 30000 : 10000)
+          : 30000
+      ) + Math.floor(Math.random() * 1500),
+    ) => {
       window.clearTimeout(pollTimer);
       if (!boardCleanedUp && workspace.isConnected) {
         pollTimer = window.setTimeout(pollBoardRevision, delay);
@@ -596,9 +759,17 @@
     };
 
     const handleVisibilityChange = () => {
-      if (document.visibilityState === "visible") scheduleBoardPoll(500);
+      if (document.visibilityState === "visible") {
+        restartRealtimeSync(100);
+        scheduleBoardPoll(500);
+      } else {
+        stopRealtimeSync();
+      }
     };
-    const handleOnline = () => scheduleBoardPoll(500);
+    const handleOnline = () => {
+      restartRealtimeSync(100);
+      scheduleBoardPoll(500);
+    };
     const handleWorkspaceHtmxRequest = (event) => {
       const requestTarget = event.detail?.target;
       if (requestTarget === workspace || requestTarget?.id === "workspace-main") {
@@ -611,6 +782,7 @@
     window.addEventListener("online", handleOnline);
     document.body.addEventListener("htmx:beforeRequest", handleWorkspaceHtmxRequest);
     updateViewedLabel();
+    restartRealtimeSync();
     scheduleBoardPoll();
   };
 

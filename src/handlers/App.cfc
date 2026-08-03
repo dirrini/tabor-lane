@@ -1,5 +1,7 @@
 component {
 
+    variables.activeBoardStreams = { total=0,users={} };
+
     property name="boardService" inject="BoardService";
     property name="workspaceService" inject="WorkspaceService";
     property name="notificationService" inject="NotificationService";
@@ -10,6 +12,7 @@ component {
 
     this.allowedMethods = {
         index = "GET",
+        boardEvents = "GET",
         boardRevision = "GET",
         createCard = "POST",
         moveCard = "POST",
@@ -23,6 +26,29 @@ component {
     };
 
     function preHandler( event, rc, prc, action, eventArguments ) {
+        // SSE clients need an HTTP response instead of an HTML redirect. The
+        // boardEvents action performs the authoritative membership/board/plan
+        // lookup before opening the stream.
+        if ( arguments.action == "boardEvents" ) {
+            prc.boardEventsAuthCode = "";
+            if ( !structKeyExists( session, "auth" ) ) {
+                prc.boardEventsAuthCode = "unauthorized";
+                return;
+            }
+            if (
+                !isCanonicalUuid( session.auth.id ?: "" )
+                || !isCanonicalUuid( session.auth.workspaceId ?: "" )
+            ) {
+                prc.boardEventsAuthCode = "unauthorized";
+                return;
+            }
+            if ( !authService.isEmailVerified( session.auth.id ) ) {
+                prc.boardEventsAuthCode = "email_unverified";
+                return;
+            }
+            prc.auth = session.auth;
+            return;
+        }
         if ( !structKeyExists( session, "auth" ) ) {
             relocate( uri = "/login" );
         }
@@ -138,6 +164,178 @@ component {
             data={ found=true,revision=result.revision },
             statusCode=200
         );
+    }
+
+    function boardEvents( event, rc, prc ) {
+        event.setHTTPHeader( name="Cache-Control", value="no-cache, no-store, no-transform" );
+        event.setHTTPHeader( name="Pragma", value="no-cache" );
+        event.setHTTPHeader( name="Vary", value="Cookie" );
+        event.setHTTPHeader( name="X-Content-Type-Options", value="nosniff" );
+
+        var authCode = prc.boardEventsAuthCode ?: "unauthorized";
+        if ( authCode.len() ) {
+            event.renderData(
+                type="json",
+                data={ success=false,code=authCode },
+                statusCode=authCode == "email_unverified" ? 403 : 401
+            );
+            return;
+        }
+
+        var boardId = lCase( trim( rc.boardId ?: "" ) );
+        var userId = prc.auth.id;
+        var workspaceId = prc.auth.workspaceId;
+        if ( !isCanonicalUuid( boardId ) ) {
+            event.renderData(
+                type="json",
+                data={ success=false,code="not_found" },
+                statusCode=404
+            );
+            return;
+        }
+
+        // Apply the connection-start limit before any database lookup. This
+        // bounds malformed, Free-plan and reconnect-storm requests equally,
+        // without allowing them to repeatedly execute the revision aggregates.
+        // A 22-second stream naturally reconnects fewer than three times per
+        // minute. Twenty starts/minute leaves room for roughly five or six
+        // tabs and manual refreshes while still containing abuse per user.
+        if (
+            !rateLimitService.allow(
+                "board-events:#userId#",
+                20,
+                60,
+                compareNoCase( server.system.environment.APP_ENV ?: "development", "production" ) == 0
+            )
+        ) {
+            event.setHTTPHeader( name="Retry-After", value="10" );
+            event.renderData(
+                type="json",
+                data={ success=false,code="rate_limit_exceeded" },
+                statusCode=429
+            );
+            return;
+        }
+
+        // This single lookup revalidates the explicit workspace membership,
+        // board ownership and current plan before any SSE headers are emitted.
+        var access = boardService.getBoardRevision(
+            userId,
+            workspaceId,
+            boardId
+        );
+        if ( !access.found ) {
+            event.renderData(
+                type="json",
+                data={ success=false,code="not_found" },
+                statusCode=404
+            );
+            return;
+        }
+        if ( compareNoCase( access.plan ?: "free", "premium" ) != 0 ) {
+            event.renderData(
+                type="json",
+                data={ success=false,code="plan_required" },
+                statusCode=403
+            );
+            return;
+        }
+
+        // SSE holds one servlet request while connected. Keep enough request
+        // capacity available for normal application traffic on the first
+        // single-VM deployment. The browser falls back to revision polling
+        // while all realtime slots are occupied.
+        if ( !acquireBoardStream( userId ) ) {
+            event.setHTTPHeader( name="Retry-After", value="5" );
+            event.renderData(
+                type="json",
+                data={ success=false,code="realtime_capacity" },
+                statusCode=503
+            );
+            return;
+        }
+
+        try {
+            event.noRender();
+            event.setHTTPHeader( name="Content-Type", value="text/event-stream; charset=utf-8" );
+            event.setHTTPHeader( name="X-Accel-Buffering", value="no" );
+
+            var lineFeed = chr( 10 );
+            var startedAt = getTickCount();
+            var lastWriteAt = startedAt;
+            var currentRevision = access.revision;
+            var streamDurationMs = 22000;
+            var pollIntervalMs = 2000;
+            var heartbeatIntervalMs = 8000;
+
+            writeOutput( "retry: 3000#lineFeed##lineFeed#" );
+            writeBoardEvent( "connected", currentRevision, lineFeed );
+            flushBoardEvents();
+
+            while ( getTickCount() - startedAt < streamDurationMs ) {
+                sleep( pollIntervalMs );
+
+                // Rechecking through the same access query means removing the
+                // member, archiving the board or downgrading the workspace
+                // closes the stream on the next polling cycle.
+                var refreshed = boardService.getBoardRevision(
+                    userId,
+                    workspaceId,
+                    boardId
+                );
+                if ( !refreshed.found ) return;
+
+                var nowTick = getTickCount();
+                if ( refreshed.revision != currentRevision ) {
+                    currentRevision = refreshed.revision;
+                    writeBoardEvent( "board.updated", currentRevision, lineFeed );
+                    flushBoardEvents();
+                    // The browser closes this source and reloads the board on
+                    // board.updated. Return immediately instead of occupying
+                    // the request thread until the normal stream timeout.
+                    return;
+                }
+
+                // Send the changed revision before closing a workspace that
+                // was downgraded. The client can then reload once and render
+                // the Free experience without reopening an SSE connection.
+                if ( compareNoCase( refreshed.plan ?: "free", "premium" ) != 0 ) {
+                    return;
+                }
+
+                if ( nowTick - lastWriteAt >= heartbeatIntervalMs ) {
+                    writeBoardEvent( "heartbeat", currentRevision, lineFeed );
+                    flushBoardEvents();
+                    lastWriteAt = nowTick;
+                }
+            }
+
+            writeBoardEvent( "reconnect", currentRevision, lineFeed );
+            flushBoardEvents();
+        } catch ( any streamException ) {
+            // Client disconnects are normal for short-lived SSE connections.
+            // Unexpected SQL/programming failures are logged, but nothing is
+            // written to a servlet response that may already be committed.
+            if ( !isBoardStreamDisconnect( streamException ) ) {
+                var safeMessage = left(
+                    replace(
+                        replace( streamException.message ?: "Unknown SSE error", chr( 13 ), " ", "all" ),
+                        chr( 10 ),
+                        " ",
+                        "all"
+                    ),
+                    500
+                );
+                writeLog(
+                    file="application",
+                    type="error",
+                    text="Board SSE failed for user #userId#, board #boardId#: #safeMessage#"
+                );
+            }
+            return;
+        } finally {
+            releaseBoardStream( userId );
+        }
     }
 
     function createCard( event, rc, prc ) {
@@ -362,6 +560,65 @@ component {
             "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
             arguments.value
         ) > 0;
+    }
+
+    private boolean function acquireBoardStream( required string userId ) {
+        var acquired = false;
+        var streamUserKey = lCase( arguments.userId );
+        lock name="tabor-lane-board-stream-capacity" type="exclusive" timeout="2" {
+            var userCount = variables.activeBoardStreams.users[ streamUserKey ] ?: 0;
+            if ( variables.activeBoardStreams.total < 20 && userCount < 4 ) {
+                variables.activeBoardStreams.total++;
+                variables.activeBoardStreams.users[ streamUserKey ] = userCount + 1;
+                acquired = true;
+            }
+        }
+        return acquired;
+    }
+
+    private void function releaseBoardStream( required string userId ) {
+        var streamUserKey = lCase( arguments.userId );
+        lock name="tabor-lane-board-stream-capacity" type="exclusive" timeout="2" {
+            var userCount = variables.activeBoardStreams.users[ streamUserKey ] ?: 0;
+            if ( userCount > 0 ) {
+                variables.activeBoardStreams.total = max( 0, variables.activeBoardStreams.total - 1 );
+                if ( userCount == 1 ) {
+                    structDelete( variables.activeBoardStreams.users, streamUserKey );
+                } else {
+                    variables.activeBoardStreams.users[ streamUserKey ] = userCount - 1;
+                }
+            }
+        }
+    }
+
+    private boolean function isBoardStreamDisconnect( required any exception ) {
+        var description = lCase(
+            ( arguments.exception.type ?: "" ) & " "
+            & ( arguments.exception.message ?: "" ) & " "
+            & ( arguments.exception.detail ?: "" )
+        );
+        return reFind(
+            "clientabort|broken pipe|connection reset|stream[^a-z]+closed|response[^a-z]+closed|ut010029",
+            description
+        ) > 0;
+    }
+
+    private void function writeBoardEvent(
+        required string eventName,
+        required string revision,
+        required string lineFeed
+    ) {
+        var payload = {};
+        payload[ "revision" ] = arguments.revision;
+        writeOutput(
+            "event: #arguments.eventName##arguments.lineFeed#"
+            & "data: #serializeJSON( payload )##arguments.lineFeed##arguments.lineFeed#"
+        );
+    }
+
+    private void function flushBoardEvents() {
+        getPageContext().getOut().flush();
+        getPageContext().getResponse().flushBuffer();
     }
 
 }

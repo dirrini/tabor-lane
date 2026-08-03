@@ -271,6 +271,7 @@
                         <li>#$r( "pricing.premium.f4" )#</li>
                         <li>#$r( "pricing.premium.f5" )#</li>
                         <li>#$r( "pricing.premium.f6" )#</li>
+                        <li>#$r( "pricing.premium.f7" )#</li>
                     </ul>
                 </article>
             </div>

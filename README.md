@@ -155,6 +155,40 @@ as a soft delete to preserve transition history.
 Free workspaces can keep up to 3 active boards. Premium workspaces have no
 active-board limit.
 
+## Real-time board synchronization
+
+Free workspaces revalidate the visible board periodically and whenever the tab
+becomes active. Premium workspaces additionally open an authenticated
+Server-Sent Events stream. The stream carries only the opaque board revision;
+when it changes, the browser fetches and replaces only `#workspace-main`, while
+preserving horizontal scroll and avoiding refreshes during an active edit or
+drag operation. Regular revision polling remains as a fallback.
+
+The current Lucee implementation keeps each stream open for about 22 seconds
+and checks the shared PostgreSQL revision every 2 seconds. This works across
+application instances without sticky sessions and is appropriate for the first
+single-VM deployment. Each application process accepts at most 20 simultaneous
+streams and 4 per user; excess clients transparently keep using revision
+polling. Connection starts are rate-limited before database access, and the
+limiter fails closed for this endpoint in production if Upstash is unavailable.
+Monitor Lucee request-thread usage and managed PostgreSQL read load as Premium
+concurrency grows; a dedicated realtime gateway or event broker is the later
+scaling path.
+
+The Nginx location that proxies the SSE endpoint must disable buffering and use
+a timeout longer than the application stream:
+
+```nginx
+location ~ ^/app/boards/[0-9a-f-]+/events$ {
+    proxy_pass http://127.0.0.1:8080;
+    proxy_http_version 1.1;
+    proxy_buffering off;
+    proxy_cache off;
+    gzip off;
+    proxy_read_timeout 40s;
+}
+```
+
 ## Workspace settings
 
 Owners and admins can update the workspace name, unique slug, reporting time

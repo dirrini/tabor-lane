@@ -93,6 +93,23 @@
 		</section>
 	</div>
 
+	<section class="management-panel settings-panel settings-integrations-entry" aria-labelledby="settings-integrations-title">
+		<div class="panel-heading settings-panel-heading">
+			<div class="settings-heading-copy">
+				<span><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##link"></use></svg></span>
+				<div><h2 id="settings-integrations-title">#$r( "settings.integrations.title" )#</h2><p>#$r( "settings.integrations.body" )#</p></div>
+			</div>
+			<a class="button button-ghost button-small" href="/app/settings/integrations" hx-get="/app/settings/integrations" hx-target="##workspace-main" hx-select="##workspace-main" hx-swap="outerHTML show:top" hx-push-url="true">
+				#$r( "settings.integrations.open" )# <svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##arrow-right"></use></svg>
+			</a>
+		</div>
+		<div class="settings-integration-capabilities" aria-label="#encodeForHTMLAttribute( $r( 'settings.integrations.capabilities' ) )#">
+			<span><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##lock"></use></svg> #$r( "integrations.tokens.title" )#</span>
+			<span><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##bolt"></use></svg> #$r( "integrations.webhooks.title" )#</span>
+			<span><svg class="icon" aria-hidden="true"><use href="/resources/icons.svg##shield-check"></use></svg> HMAC SHA-256</span>
+		</div>
+	</section>
+
 	<section class="management-panel settings-panel ownership-panel" aria-labelledby="settings-ownership-title">
 		<div class="panel-heading settings-panel-heading">
 			<div class="settings-heading-copy">

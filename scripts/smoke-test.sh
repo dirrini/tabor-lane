@@ -35,7 +35,11 @@ notification_badge_html="$(mktemp)"
 automations_html="$(mktemp)"
 automation_panel_html="$(mktemp)"
 settings_html="$(mktemp)"
-trap 'rm -f "$cookie_jar" "$signup_html" "$app_html" "$check_email_html" "$members_html" "$billing_html" "$profile_html" "$card_html" "$partial_html" "$history_restore_html" "$invitation_html" "$member_cookie_jar" "$member_signup_html" "$attachment_payload" "$attachment_download" "$avatar_payload" "$avatar_before" "$avatar_after" "$boards_html" "$my_work_html" "$analytics_html" "$analytics_results_html" "$analytics_json" "$analytics_headers" "$board_revision_headers" "$notifications_html" "$notification_partial_html" "$notification_write_html" "$notification_badge_html" "$automations_html" "$automation_panel_html" "$settings_html"' EXIT
+integrations_html="$(mktemp)"
+api_json="$(mktemp)"
+api_aux_json="$(mktemp)"
+api_headers="$(mktemp)"
+trap 'rm -f "$cookie_jar" "$signup_html" "$app_html" "$check_email_html" "$members_html" "$billing_html" "$profile_html" "$card_html" "$partial_html" "$history_restore_html" "$invitation_html" "$member_cookie_jar" "$member_signup_html" "$attachment_payload" "$attachment_download" "$avatar_payload" "$avatar_before" "$avatar_after" "$boards_html" "$my_work_html" "$analytics_html" "$analytics_results_html" "$analytics_json" "$analytics_headers" "$board_revision_headers" "$notifications_html" "$notification_partial_html" "$notification_write_html" "$notification_badge_html" "$automations_html" "$automation_panel_html" "$settings_html" "$integrations_html" "$api_json" "$api_aux_json" "$api_headers"' EXIT
 
 assert_analytics_open_cards() {
   node -e '
@@ -270,7 +274,7 @@ grep --quiet 'name="returnTo" value="analytics"' "$card_html"
 grep --quiet 'name="returnFromDate" value="' "$card_html"
 grep --quiet 'name="returnToDate" value="' "$card_html"
 
-for partial_path in app app/my-work app/members app/profile app/billing app/boards/manage app/analytics app/automations app/notifications app/settings; do
+for partial_path in app app/my-work app/members app/profile app/billing app/boards/manage app/analytics app/automations app/notifications app/settings app/settings/integrations; do
   curl --fail --silent --show-error --cookie "$cookie_jar" \
     --header "HX-Request: true" "$base_url/$partial_path" > "$partial_html"
   grep --quiet 'id="workspace-main"' "$partial_html"
@@ -2667,6 +2671,382 @@ if command -v docker > /dev/null 2>&1 \
     --command "DELETE FROM workspace WHERE id IN ('$secondary_workspace_id','$foreign_workspace_id');" \
     > /dev/null
 fi
+
+# Developer integrations stay server-to-server: the HTML page manages credentials,
+# while API requests authenticate independently of the browser session and CSRF.
+curl --fail --silent --show-error --cookie "$cookie_jar" \
+  "$base_url/app/settings/integrations" > "$integrations_html"
+grep --quiet '<!doctype html>' "$integrations_html"
+grep --quiet 'class="workspace-sidebar"' "$integrations_html"
+grep --quiet 'data-workspace-page="integrations"' "$integrations_html"
+grep --quiet 'href="/app/settings" class="active" aria-current="page"' "$integrations_html"
+grep --quiet 'action="/app/settings/integrations/tokens"' "$integrations_html"
+grep --quiet 'action="/app/settings/integrations/webhooks"' "$integrations_html"
+grep --extended-regexp --quiet '<small>boards(&#x3a;|:)read</small>' "$integrations_html"
+grep --extended-regexp --quiet '<small>cards(&#x3a;|:)create</small>' "$integrations_html"
+grep --quiet 'GET /api/v1/boards' "$integrations_html"
+grep --quiet 'POST /api/v1/cards' "$integrations_html"
+grep --quiet 'card.created' "$integrations_html"
+grep --quiet 'card.completed' "$integrations_html"
+if grep --quiet -E 'card\.commented|workspace\.member_joined|workspace\.ownership_transferred' "$integrations_html"; then
+  echo "Integrations page exposed an event type outside the public webhook allowlist" >&2
+  exit 1
+fi
+integrations_csrf="$(
+  sed -n '/action="\/app\/settings\/integrations\/tokens"/,/<\/form>/ s/.*name="csrfToken" value="\([^"]*\)".*/\1/p' \
+    "$integrations_html" | head -1
+)"
+test -n "$integrations_csrf"
+
+unauthenticated_api_status="$(
+  curl --silent --show-error --dump-header "$api_headers" \
+    --output "$api_json" --write-out '%{http_code}' \
+    "$base_url/api/v1/boards"
+)"
+test "$unauthenticated_api_status" = "401"
+grep --ignore-case --quiet '^content-type: application/json' "$api_headers"
+grep --ignore-case --quiet '^www-authenticate: Bearer' "$api_headers"
+if grep --ignore-case --quiet '^location:' "$api_headers"; then
+  echo "Unauthenticated API request unexpectedly redirected to the login page" >&2
+  exit 1
+fi
+node -e '
+  const fs=require("fs");
+  const payload=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));
+  const get=(value,name)=>value && value[Object.keys(value).find((key)=>key.toLowerCase()===name.toLowerCase())];
+  if(get(get(payload,"error"),"code")!=="invalid_token") throw new Error("Expected invalid_token");
+' "$api_json"
+
+# A read-only token proves that scopes are enforced before request bodies are acted on.
+limited_token_name="CI boards read token"
+curl --fail --silent --show-error --location \
+  --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+  --data-urlencode "csrfToken=$integrations_csrf" \
+  --data-urlencode "name=$limited_token_name" \
+  --data-urlencode "scopes=boards:read" \
+  --data-urlencode "expirationDays=30" \
+  "$base_url/app/settings/integrations/tokens" > "$integrations_html"
+limited_token="$(
+  sed -n 's/.*<code data-integration-secret>\([^<]*\)<\/code>.*/\1/p' \
+    "$integrations_html" | head -1
+)"
+if [[ ! "$limited_token" =~ ^tlk_[0-9a-f]{16}_[A-Za-z0-9_-]{43}$ ]]; then
+  echo "Token creation did not return a valid one-time credential" >&2
+  exit 1
+fi
+grep --quiet "$limited_token_name" "$integrations_html"
+limited_token_id="$(
+  sed -n 's/.*data-api-token-id="\([^"]*\)".*/\1/p' "$integrations_html" | head -1
+)"
+if [[ ! "$limited_token_id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
+  echo "Token list did not expose the created credential ID" >&2
+  exit 1
+fi
+limited_public_id="${limited_token:4:16}"
+grep -A 2 "data-api-token-id=\"$limited_token_id\"" "$integrations_html" \
+  | grep --quiet "tlk_${limited_public_id}_..."
+
+curl --fail --silent --show-error --cookie "$cookie_jar" \
+  "$base_url/app/settings/integrations" > "$integrations_html"
+if grep --quiet 'data-integration-secret' "$integrations_html" \
+  || grep --quiet "$limited_token" "$integrations_html"; then
+  echo "Raw API token was rendered more than once" >&2
+  exit 1
+fi
+integrations_csrf="$(
+  sed -n '/action="\/app\/settings\/integrations\/tokens"/,/<\/form>/ s/.*name="csrfToken" value="\([^"]*\)".*/\1/p' \
+    "$integrations_html" | head -1
+)"
+test -n "$integrations_csrf"
+
+limited_boards_status="$(
+  curl --silent --show-error --output "$api_json" --write-out '%{http_code}' \
+    --header "Authorization: Bearer $limited_token" \
+    "$base_url/api/v1/boards"
+)"
+test "$limited_boards_status" = "200"
+node -e '
+  const fs=require("fs");
+  const payload=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));
+  const get=(value,name)=>value && value[Object.keys(value).find((key)=>key.toLowerCase()===name.toLowerCase())];
+  const boards=get(payload,"data");
+  if(!Array.isArray(boards) || !boards.some((board)=>get(board,"id")===process.argv[2])) {
+    throw new Error("Managed board was not returned by the API");
+  }
+' "$api_json" "$managed_board_id"
+
+limited_write_status="$(
+  curl --silent --show-error --output "$api_json" --write-out '%{http_code}' \
+    --header "Authorization: Bearer $limited_token" \
+    --header "Content-Type: application/json" \
+    --data "{\"laneId\":\"$target_lane_id\",\"title\":\"CI forbidden API card\"}" \
+    "$base_url/api/v1/cards"
+)"
+test "$limited_write_status" = "403"
+node -e '
+  const fs=require("fs");
+  const payload=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));
+  const get=(value,name)=>value && value[Object.keys(value).find((key)=>key.toLowerCase()===name.toLowerCase())];
+  if(get(get(payload,"error"),"code")!=="insufficient_scope") throw new Error("Expected insufficient_scope");
+' "$api_json"
+
+limited_revoke_status="$(
+  curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+    --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+    --request POST "$base_url/app/settings/integrations/tokens/$limited_token_id/revoke" \
+    --data-urlencode "csrfToken=$integrations_csrf" \
+    --data-urlencode "tokenId=$limited_token_id"
+)"
+test "$limited_revoke_status" = "302"
+revoked_limited_status="$(
+  curl --silent --show-error --output "$api_json" --write-out '%{http_code}' \
+    --header "Authorization: Bearer $limited_token" \
+    "$base_url/api/v1/boards"
+)"
+test "$revoked_limited_status" = "401"
+
+# The full token exercises the first write API without relying on the browser session.
+curl --fail --silent --show-error --cookie "$cookie_jar" \
+  "$base_url/app/settings/integrations" > "$integrations_html"
+integrations_csrf="$(
+  sed -n '/action="\/app\/settings\/integrations\/tokens"/,/<\/form>/ s/.*name="csrfToken" value="\([^"]*\)".*/\1/p' \
+    "$integrations_html" | head -1
+)"
+test -n "$integrations_csrf"
+full_token_name="CI card management token"
+curl --fail --silent --show-error --location \
+  --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+  --data-urlencode "csrfToken=$integrations_csrf" \
+  --data-urlencode "name=$full_token_name" \
+  --data-urlencode "scopes=boards:read,cards:read,cards:create,cards:update,cards:move" \
+  --data-urlencode "expirationDays=30" \
+  "$base_url/app/settings/integrations/tokens" > "$integrations_html"
+full_token="$(
+  sed -n 's/.*<code data-integration-secret>\([^<]*\)<\/code>.*/\1/p' \
+    "$integrations_html" | head -1
+)"
+if [[ ! "$full_token" =~ ^tlk_[0-9a-f]{16}_[A-Za-z0-9_-]{43}$ ]]; then
+  echo "Full-scope token creation did not return a valid one-time credential" >&2
+  exit 1
+fi
+full_token_id="$(
+  sed -n 's/.*data-api-token-id="\([^"]*\)".*/\1/p' "$integrations_html" | head -1
+)"
+if [[ ! "$full_token_id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
+  echo "Full-scope token was not listed after creation" >&2
+  exit 1
+fi
+
+curl --fail --silent --show-error --cookie "$cookie_jar" \
+  "$base_url/app/settings/integrations" > "$integrations_html"
+if grep --quiet 'data-integration-secret' "$integrations_html" \
+  || grep --quiet "$full_token" "$integrations_html"; then
+  echo "Full-scope API token was rendered more than once" >&2
+  exit 1
+fi
+integrations_csrf="$(
+  sed -n '/action="\/app\/settings\/integrations\/tokens"/,/<\/form>/ s/.*name="csrfToken" value="\([^"]*\)".*/\1/p' \
+    "$integrations_html" | head -1
+)"
+test -n "$integrations_csrf"
+
+full_boards_status="$(
+  curl --silent --show-error --output "$api_json" --write-out '%{http_code}' \
+    --header "Authorization: Bearer $full_token" \
+    "$base_url/api/v1/boards"
+)"
+test "$full_boards_status" = "200"
+node -e '
+  const fs=require("fs");
+  const payload=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));
+  const get=(value,name)=>value && value[Object.keys(value).find((key)=>key.toLowerCase()===name.toLowerCase())];
+  const boards=get(payload,"data");
+  if(!Array.isArray(boards) || !boards.some((board)=>get(board,"id")===process.argv[2])) {
+    throw new Error("Managed board was not returned to the full-scope token");
+  }
+' "$api_json" "$managed_board_id"
+
+board_detail_status="$(
+  curl --silent --show-error --output "$api_json" --write-out '%{http_code}' \
+    --header "Authorization: Bearer $full_token" \
+    "$base_url/api/v1/boards/$managed_board_id"
+)"
+test "$board_detail_status" = "200"
+board_cards_status="$(
+  curl --silent --show-error --output "$api_aux_json" --write-out '%{http_code}' \
+    --header "Authorization: Bearer $full_token" \
+    "$base_url/api/v1/boards/$managed_board_id/cards"
+)"
+test "$board_cards_status" = "200"
+api_source_lane_id="$(node -e '
+  const fs=require("fs");
+  const boardPayload=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));
+  const cardPayload=JSON.parse(fs.readFileSync(process.argv[2],"utf8"));
+  const get=(value,name)=>value && value[Object.keys(value).find((key)=>key.toLowerCase()===name.toLowerCase())];
+  const board=get(boardPayload,"data");
+  const lanes=get(board,"lanes");
+  const cards=get(cardPayload,"data");
+  if(!Array.isArray(lanes) || !lanes.some((lane)=>get(lane,"id")===process.argv[3] && get(lane,"isCompletionLane")===true)) {
+    throw new Error("Completion lane was not returned by the board API");
+  }
+  const candidates=lanes.filter((lane)=>get(lane,"isCompletionLane")!==true).filter((lane)=>{
+    const limit=get(lane,"wipLimit");
+    const count=cards.filter((card)=>get(card,"laneId")===get(lane,"id")).length;
+    return limit===undefined || limit===null || count<Number(limit);
+  }).sort((left,right)=>{
+    const leftLimit=get(left,"wipLimit");
+    const rightLimit=get(right,"wipLimit");
+    if((leftLimit===undefined)!==(rightLimit===undefined)) return leftLimit===undefined ? -1 : 1;
+    return Number(get(left,"position"))-Number(get(right,"position"));
+  });
+  if(!candidates.length) throw new Error("No writable non-completion lane has available WIP capacity");
+  process.stdout.write(get(candidates[0],"id"));
+' "$api_json" "$api_aux_json" "$completion_lane_id")"
+test -n "$api_source_lane_id"
+
+api_card_title="CI API managed card"
+api_create_status="$(
+  curl --silent --show-error --dump-header "$api_headers" \
+    --output "$api_json" --write-out '%{http_code}' \
+    --header "Authorization: Bearer $full_token" \
+    --header "Content-Type: application/json" \
+    --data "{\"laneId\":\"$api_source_lane_id\",\"title\":\"$api_card_title\",\"description\":\"Created through the integration smoke test\"}" \
+    "$base_url/api/v1/cards"
+)"
+test "$api_create_status" = "201"
+api_card_id="$(node -e '
+  const fs=require("fs");
+  const payload=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));
+  const get=(value,name)=>value && value[Object.keys(value).find((key)=>key.toLowerCase()===name.toLowerCase())];
+  process.stdout.write(get(get(payload,"data"),"id") || "");
+' "$api_json")"
+if [[ ! "$api_card_id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
+  echo "Card API did not return a canonical card ID" >&2
+  exit 1
+fi
+grep --ignore-case --quiet "^location: /api/v1/cards/$api_card_id" "$api_headers"
+node -e '
+  const fs=require("fs");
+  const payload=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));
+  const get=(value,name)=>value && value[Object.keys(value).find((key)=>key.toLowerCase()===name.toLowerCase())];
+  const data=get(payload,"data");
+  if(get(data,"boardId")!==process.argv[2] || get(data,"laneId")!==process.argv[3]) {
+    throw new Error("Created card references the wrong board or lane");
+  }
+' "$api_json" "$managed_board_id" "$api_source_lane_id"
+
+api_card_get_status="$(
+  curl --silent --show-error --output "$api_json" --write-out '%{http_code}' \
+    --header "Authorization: Bearer $full_token" \
+    "$base_url/api/v1/cards/$api_card_id"
+)"
+test "$api_card_get_status" = "200"
+api_card_version="$(node -e '
+  const fs=require("fs");
+  const payload=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));
+  const get=(value,name)=>value && value[Object.keys(value).find((key)=>key.toLowerCase()===name.toLowerCase())];
+  const card=get(payload,"data");
+  if(get(card,"title")!==process.argv[2] || get(card,"description")!=="Created through the integration smoke test") {
+    throw new Error("Card detail did not preserve the created fields");
+  }
+  process.stdout.write(String(get(card,"version")));
+' "$api_json" "$api_card_title")"
+if [[ ! "$api_card_version" =~ ^[1-9][0-9]*$ ]]; then
+  echo "Card API returned an invalid optimistic-lock version" >&2
+  exit 1
+fi
+
+api_patch_status="$(
+  curl --silent --show-error --output "$api_json" --write-out '%{http_code}' \
+    --request PATCH \
+    --header "Authorization: Bearer $full_token" \
+    --header "Content-Type: application/json" \
+    --data "{\"priority\":\"high\",\"labels\":[\"integration\",\"api\"],\"isBlocked\":true,\"expectedVersion\":$api_card_version}" \
+    "$base_url/api/v1/cards/$api_card_id"
+)"
+test "$api_patch_status" = "200"
+api_patched_version="$(node -e '
+  const fs=require("fs");
+  const payload=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));
+  const get=(value,name)=>value && value[Object.keys(value).find((key)=>key.toLowerCase()===name.toLowerCase())];
+  process.stdout.write(String(get(get(payload,"data"),"version")));
+' "$api_json")"
+test "$api_patched_version" -gt "$api_card_version"
+
+curl --fail --silent --show-error \
+  --header "Authorization: Bearer $full_token" \
+  "$base_url/api/v1/cards/$api_card_id" > "$api_json"
+node -e '
+  const fs=require("fs");
+  const payload=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));
+  const get=(value,name)=>value && value[Object.keys(value).find((key)=>key.toLowerCase()===name.toLowerCase())];
+  const card=get(payload,"data");
+  const labels=get(card,"labels");
+  if(get(card,"title")!==process.argv[2] || get(card,"description")!=="Created through the integration smoke test") {
+    throw new Error("Partial PATCH erased an omitted card field");
+  }
+  if(get(card,"priority")!=="high" || get(card,"isBlocked")!==true || !Array.isArray(labels) || !labels.includes("integration") || !labels.includes("api")) {
+    throw new Error("PATCH fields were not persisted");
+  }
+  if(Number(get(card,"version"))!==Number(process.argv[3])) throw new Error("PATCH version did not persist");
+' "$api_json" "$api_card_title" "$api_patched_version"
+
+api_move_status="$(
+  curl --silent --show-error --output "$api_json" --write-out '%{http_code}' \
+    --header "Authorization: Bearer $full_token" \
+    --header "Content-Type: application/json" \
+    --data "{\"laneId\":\"$completion_lane_id\",\"beforeCardId\":\"\"}" \
+    "$base_url/api/v1/cards/$api_card_id/move"
+)"
+test "$api_move_status" = "200"
+curl --fail --silent --show-error \
+  --header "Authorization: Bearer $full_token" \
+  "$base_url/api/v1/cards/$api_card_id" > "$api_json"
+node -e '
+  const fs=require("fs");
+  const payload=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));
+  const get=(value,name)=>value && value[Object.keys(value).find((key)=>key.toLowerCase()===name.toLowerCase())];
+  const card=get(payload,"data");
+  if(get(card,"laneId")!==process.argv[2] || get(card,"isCompleted")!==true || !get(card,"completedAt")) {
+    throw new Error("Moving to the completion lane did not complete the card");
+  }
+' "$api_json" "$completion_lane_id"
+
+# Clean up the API-created card through the authenticated application command.
+curl --fail --silent --show-error --cookie "$cookie_jar" \
+  "$base_url/app/cards/$api_card_id" > "$card_html"
+api_card_csrf="$(
+  sed -n 's/.*data-card-csrf-token="\([^"]*\)".*/\1/p' "$card_html" | head -1
+)"
+test -n "$api_card_csrf"
+api_archive_status="$(
+  curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+    --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+    --request POST "$base_url/app/cards/$api_card_id/archive" \
+    --data-urlencode "csrfToken=$api_card_csrf"
+)"
+test "$api_archive_status" = "302"
+archived_api_status="$(
+  curl --silent --show-error --output "$api_json" --write-out '%{http_code}' \
+    --header "Authorization: Bearer $full_token" \
+    "$base_url/api/v1/cards/$api_card_id"
+)"
+test "$archived_api_status" = "404"
+
+full_revoke_status="$(
+  curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+    --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+    --request POST "$base_url/app/settings/integrations/tokens/$full_token_id/revoke" \
+    --data-urlencode "csrfToken=$integrations_csrf" \
+    --data-urlencode "tokenId=$full_token_id"
+)"
+test "$full_revoke_status" = "302"
+revoked_full_status="$(
+  curl --silent --show-error --output "$api_json" --write-out '%{http_code}' \
+    --header "Authorization: Bearer $full_token" \
+    "$base_url/api/v1/boards"
+)"
+test "$revoked_full_status" = "401"
 
 curl --fail --silent --show-error --location \
   --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \

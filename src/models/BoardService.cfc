@@ -374,6 +374,23 @@ component singleton {
 							payload = createdPayload,
 							deduplicationKey = "card.created:#cardId#"
 						);
+						if ( access[ 1 ].is_completion_lane ?: false ) {
+							var completedPayload = {};
+							completedPayload[ "cardTitle" ] = normalizedTitle;
+							completedPayload[ "boardId" ] = access[ 1 ].board_id;
+							completedPayload[ "laneId" ] = arguments.columnId;
+							completedPayload[ "laneName" ] = access[ 1 ].lane_name;
+							eventPublisherService.publish(
+								workspaceId = arguments.workspaceId,
+								eventType = "card.completed",
+								aggregateType = "card",
+								aggregateId = cardId,
+								actorId = arguments.userId,
+								recipientUserIds = [],
+								payload = completedPayload,
+								deduplicationKey = "card.completed:#cardId#:1"
+							);
+						}
 						outcome = {
 							success=true,
 							cardId=cardId,
@@ -452,6 +469,7 @@ component singleton {
 		var rows = queryExecute(
 			"SELECT CAST(c.column_id AS TEXT) AS from_column_id,source.name AS from_column_name,
 			        CAST(c.board_id AS TEXT) AS board_id,c.title AS card_title,c.version,
+			        c.completed_at IS NOT NULL AS was_completed,
 			        wm.role,target.wip_limit,target.name AS to_column_name,
 			        target.is_completion_lane AS target_completes_cards,
 			        target.is_hidden_from_members AS target_is_hidden
@@ -524,6 +542,8 @@ component singleton {
 
 		var columnChanged = rows[ 1 ].from_column_id != arguments.columnId;
 		var moveEventType = columnChanged ? "card.moved" : "card.reordered";
+		var completesAfterMove = rows[ 1 ].target_completes_cards
+			|| ( rows[ 1 ].target_is_hidden && rows[ 1 ].was_completed );
 		var moveAssigneeIds = getCardAssigneeIds( arguments.workspaceId, arguments.cardId );
 		var moveRecipients = recipientsExcept( moveAssigneeIds, arguments.userId );
 		var eventVersion = val( rows[ 1 ].version ) + 1;
@@ -667,6 +687,24 @@ component singleton {
 				payload = movePayload,
 				deduplicationKey = "#moveEventType#:#arguments.cardId#:#eventVersion#"
 		);
+		if ( columnChanged && completesAfterMove != rows[ 1 ].was_completed ) {
+			var completionEventType = completesAfterMove ? "card.completed" : "card.reopened";
+			var completionPayload = {};
+			completionPayload[ "cardTitle" ] = rows[ 1 ].card_title;
+			completionPayload[ "boardId" ] = rows[ 1 ].board_id;
+			completionPayload[ "laneId" ] = arguments.columnId;
+			completionPayload[ "laneName" ] = rows[ 1 ].to_column_name;
+			eventPublisherService.publish(
+				workspaceId = arguments.workspaceId,
+				eventType = completionEventType,
+				aggregateType = "card",
+				aggregateId = arguments.cardId,
+				actorId = arguments.userId,
+				recipientUserIds = [],
+				payload = completionPayload,
+				deduplicationKey = "#completionEventType#:#arguments.cardId#:#eventVersion#"
+			);
+		}
 		var revisionResult = getBoardRevision(
 			arguments.userId,
 			arguments.workspaceId,
@@ -804,6 +842,102 @@ component singleton {
 		return outcome;
 	}
 
+	struct function patchCard(
+		required string userId,
+		required string workspaceId,
+		required string cardId,
+		required struct data
+	){
+		var outcome = { success=false,code="forbidden" };
+		transaction {
+			var currentRows = queryExecute(
+				"SELECT c.title,COALESCE(c.description,'') AS description,
+				        c.priority,array_to_string(c.labels, ',') AS labels,
+				        COALESCE(to_char(c.due_at AT TIME ZONE 'UTC','YYYY-MM-DD'),'') AS due_date,
+				        c.blocked_at IS NOT NULL AS is_blocked,c.version,
+				        access.role AS access_role
+				 FROM card c
+				 JOIN board b
+				   ON b.id=c.board_id
+				  AND b.workspace_id=c.workspace_id
+				  AND b.is_archived=false
+				 JOIN board_column bc
+				   ON bc.id=c.column_id
+				  AND bc.board_id=c.board_id
+				  AND bc.is_archived=false
+				 JOIN workspace_member access
+				   ON access.workspace_id=c.workspace_id
+				  AND access.user_id=CAST(:userId AS UUID)
+				 WHERE c.id=CAST(:cardId AS UUID)
+				   AND c.workspace_id=CAST(:workspaceId AS UUID)
+				   AND c.archived_at IS NULL
+				   AND (bc.is_hidden_from_members=false OR access.role IN ('owner','admin'))
+				 FOR UPDATE OF c
+				 FOR SHARE OF access",
+				{
+					userId=arguments.userId,
+					workspaceId=arguments.workspaceId,
+					cardId=arguments.cardId
+				},
+				{ returntype="array" }
+			);
+			if ( currentRows.len() ) {
+				var current = currentRows[ 1 ];
+				if ( current.access_role == "viewer" ) {
+					outcome = { success=false,code="read_only" };
+				} else if (
+					structKeyExists( arguments.data, "expectedVersion" )
+					&& val( arguments.data.expectedVersion ) != val( current.version )
+				) {
+					outcome = {
+						success=false,
+						code="version_conflict",
+						version=val( current.version )
+					};
+				} else {
+					var currentAssigneeIds = getCardAssigneeIds(
+						arguments.workspaceId,
+						arguments.cardId,
+						false
+					);
+					var merged = {};
+					merged[ "title" ] = structKeyExists( arguments.data, "title" )
+						? arguments.data.title
+						: current.title;
+					merged[ "description" ] = structKeyExists( arguments.data, "description" )
+						? arguments.data.description
+						: current.description;
+					merged[ "priority" ] = structKeyExists( arguments.data, "priority" )
+						? arguments.data.priority
+						: current.priority;
+					merged[ "dueDate" ] = structKeyExists( arguments.data, "dueDate" )
+						? arguments.data.dueDate
+						: current.due_date;
+					merged[ "labels" ] = structKeyExists( arguments.data, "labels" )
+						? (
+							isArray( arguments.data.labels )
+								? arrayToList( arguments.data.labels )
+								: arguments.data.labels
+						)
+						: ( current.labels ?: "" );
+					merged[ "assigneeIds" ] = structKeyExists( arguments.data, "assigneeIds" )
+						? arguments.data.assigneeIds
+						: currentAssigneeIds;
+					merged[ "isBlocked" ] = structKeyExists( arguments.data, "isBlocked" )
+						? arguments.data.isBlocked
+						: current.is_blocked;
+					outcome = updateCardLocked(
+						userId=arguments.userId,
+						workspaceId=arguments.workspaceId,
+						cardId=arguments.cardId,
+						data=merged
+					);
+				}
+			}
+		}
+		return outcome;
+	}
+
 	private struct function updateCardLocked(
 		required string userId,
 		required string workspaceId,
@@ -897,6 +1031,9 @@ component singleton {
 		var normalizedTitle = trim( arguments.data.title );
 		var normalizedDueDate = trim( arguments.data.dueDate ?: "" );
 		var isBlocked = isTruthy( arguments.data.isBlocked ?: "" );
+		var wasBlocked = structKeyExists( access.card, "blocked_at" )
+			&& !isNull( access.card.blocked_at )
+			&& toString( access.card.blocked_at ).len();
 		var assignmentChanged = !sameUuidSet( previousAssigneeIds, normalizedAssignees.ids );
 		var eventVersion = val( access.card.version ) + 1;
 		var updateRows = queryExecute(
@@ -972,6 +1109,24 @@ component singleton {
 			deduplicationKey = "card.updated:#arguments.cardId#:#eventVersion#"
 		);
 
+		if ( wasBlocked != isBlocked ) {
+			var blockedEventType = isBlocked ? "card.blocked" : "card.unblocked";
+			var blockedPayload = {};
+			blockedPayload[ "cardTitle" ] = normalizedTitle;
+			blockedPayload[ "boardId" ] = access.card.board_id;
+			blockedPayload[ "isBlocked" ] = isBlocked;
+			eventPublisherService.publish(
+				workspaceId = arguments.workspaceId,
+				eventType = blockedEventType,
+				aggregateType = "card",
+				aggregateId = arguments.cardId,
+				actorId = arguments.userId,
+				recipientUserIds = [],
+				payload = blockedPayload,
+				deduplicationKey = "#blockedEventType#:#arguments.cardId#:#eventVersion#"
+			);
+		}
+
 		if ( assignmentChanged ) {
 			var addedAssigneeIds = arrayDifference( normalizedAssignees.ids, previousAssigneeIds );
 			var removedAssigneeIds = arrayDifference( previousAssigneeIds, normalizedAssignees.ids );
@@ -996,7 +1151,11 @@ component singleton {
 				deduplicationKey = "card.assigned:#arguments.cardId#:#eventVersion#"
 			);
 		}
-		return {success=true,boardId=access.card.board_id};
+		return {
+			success=true,
+			boardId=access.card.board_id,
+			version=eventVersion
+		};
 	}
 
 	struct function addComment( required string userId, required string workspaceId, required string cardId, required string body ){

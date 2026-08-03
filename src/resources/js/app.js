@@ -1055,6 +1055,36 @@
     removeButton?.addEventListener("click", removeAvatar);
   };
 
+  const initIntegrationReveal = (root) => {
+    const reveal = root.matches?.("[data-integration-reveal]")
+      ? root
+      : root.querySelector?.("[data-integration-reveal]");
+    if (!reveal || reveal.dataset.integrationRevealInitialized) return;
+    reveal.dataset.integrationRevealInitialized = "true";
+    const copyButton = reveal.querySelector("[data-integration-copy]");
+    const secret = reveal.querySelector("[data-integration-secret]");
+    copyButton?.addEventListener("click", async () => {
+      if (!secret) return;
+      const value = secret.textContent.trim();
+      try {
+        await navigator.clipboard.writeText(value);
+      } catch (error) {
+        const temporary = document.createElement("textarea");
+        temporary.value = value;
+        temporary.setAttribute("readonly", "");
+        temporary.style.position = "fixed";
+        temporary.style.opacity = "0";
+        document.body.appendChild(temporary);
+        temporary.select();
+        document.execCommand("copy");
+        temporary.remove();
+      }
+      const label = copyButton.querySelector("span");
+      if (label) label.textContent = reveal.dataset.copiedLabel;
+      copyButton.classList.add("copied");
+    });
+  };
+
   const updateWorkspaceNavigation = (root) => {
     const workspaceMain = root.matches?.("[data-workspace-page]")
       ? root
@@ -1069,6 +1099,7 @@
       analytics: "/app/analytics",
       automations: "/app/automations",
       settings: "/app/settings",
+      integrations: "/app/settings",
     };
 
     workspaceShell.querySelectorAll(".workspace-sidebar nav a").forEach((link) => {
@@ -1110,6 +1141,7 @@
     initCardDetails(root);
     initAttachments(root);
     initAvatarManager(root);
+    initIntegrationReveal(root);
     updateWorkspaceNavigation(root);
   };
 

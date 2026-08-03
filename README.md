@@ -74,6 +74,7 @@ Use the pooled Neon hostname and require TLS. Production configuration includes:
 - `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`
 - `OUTBOX_PROCESSING_ENABLED`, `OUTBOX_BATCH_SIZE`, `OUTBOX_INTERVAL_SECONDS`
 - `OUTBOX_MAX_ATTEMPTS`, `OUTBOX_CLAIM_TIMEOUT_SECONDS`
+- `WEBHOOK_SECRET_ENCRYPTION_KEY` (Base64-encoded 32-byte key)
 
 Database migrations live in `scripts/postgres/migrations`. They run before the
 application starts in both development and production.
@@ -181,6 +182,33 @@ read state, and rechecks current membership and hidden-lane visibility before
 returning any card data. Set `OUTBOX_PROCESSING_ENABLED=false` on an application
 instance only when another instance is responsible for processing the shared
 outbox.
+
+## Product integrations
+
+Workspace owners and administrators can manage server-to-server credentials at
+`/app/settings/integrations`. API tokens are shown only once, stored only as a
+SHA-256 hash and revalidate the creator's current membership, role and verified
+email on every request. Free workspaces can keep 1 active token and Premium
+workspaces can keep 10.
+
+The first API version exposes:
+
+- `GET /api/v1/boards` and `GET /api/v1/boards/:boardId`
+- `GET /api/v1/boards/:boardId/cards` and `GET /api/v1/cards/:cardId`
+- `POST /api/v1/cards`
+- `PATCH /api/v1/cards/:cardId`
+- `POST /api/v1/cards/:cardId/move`
+
+Credentials use Bearer authentication and granular `boards:read`, `cards:read`,
+`cards:create`, `cards:update` and `cards:move` scopes. The API never falls back
+to a browser session and applies the same workspace, role, hidden-lane, WIP and
+optimistic-lock rules as the application.
+
+Webhook endpoint registration, encrypted signing secrets and the durable
+delivery queue are part of this first foundation. The outbound HTTP dispatcher
+is intentionally not enabled yet; activating transmission to registered
+third-party endpoints requires an explicit product authorization and a final
+payload/privacy review.
 
 ## Automations
 

@@ -5,6 +5,13 @@ component {
 
         route( "/" ).to( "Home.index" );
         post( "/stripe/webhook" ).to( "Billing.webhook" );
+        get( "/api/v1/boards/:boardId/cards" ).to( "ApiV1.boardCards" );
+        get( "/api/v1/boards/:boardId" ).to( "ApiV1.board" );
+        get( "/api/v1/boards" ).to( "ApiV1.boards" );
+        post( "/api/v1/cards/:cardId/move" ).to( "ApiV1.moveCard" );
+        patch( "/api/v1/cards/:cardId" ).to( "ApiV1.patchCard" );
+        get( "/api/v1/cards/:cardId" ).to( "ApiV1.card" );
+        post( "/api/v1/cards" ).to( "ApiV1.createCard" );
         post( "/app/billing/checkout" ).to( "Billing.checkout" );
         post( "/app/billing/portal" ).to( "Billing.portal" );
         route( "/app/billing/status" ).to( "Billing.status" );
@@ -27,6 +34,13 @@ component {
         post( "/app/automations/:ruleId/toggle" ).to( "Automations.toggle" );
         post( "/app/automations" ).to( "Automations.create" );
         get( "/app/automations" ).to( "Automations.index" );
+        post( "/app/settings/integrations/webhooks/:endpointId/test" ).to( "Integrations.testWebhook" );
+        post( "/app/settings/integrations/webhooks/:endpointId/toggle" ).to( "Integrations.toggleWebhook" );
+        post( "/app/settings/integrations/webhooks/:endpointId/delete" ).to( "Integrations.deleteWebhook" );
+        post( "/app/settings/integrations/webhooks" ).to( "Integrations.createWebhook" );
+        post( "/app/settings/integrations/tokens/:tokenId/revoke" ).to( "Integrations.revokeToken" );
+        post( "/app/settings/integrations/tokens" ).to( "Integrations.createToken" );
+        get( "/app/settings/integrations" ).to( "Integrations.index" );
         post( "/app/settings/ownership" ).to( "Settings.transferOwnership" );
         post( "/app/settings/security" ).to( "Settings.updateSecurity" );
         post( "/app/settings/general" ).to( "Settings.updateGeneral" );
